@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import Combine
 import CoreImage
@@ -262,6 +263,9 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     func capturePhoto(completion: @escaping (UIImage?) -> Void) {
+        // Play shutter sound (system sound 1108 is the camera shutter)
+        AudioServicesPlaySystemSound(1108)
+
         // Return the current filtered preview as a photo
         DispatchQueue.main.async { [weak self] in
             completion(self?.filteredPreview)
