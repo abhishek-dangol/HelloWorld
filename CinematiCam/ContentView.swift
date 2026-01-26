@@ -8,6 +8,9 @@
 import SwiftUI
 import Photos
 import UIKit
+import MediaPlayer
+import AVFoundation
+import Combine
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -38,6 +41,7 @@ struct ContentView: View {
     @State private var retouchRadius: Float = 9.0
     @State private var skinBrightness: Float = 0.0
     @State private var skinWarmth: Float = 0.0
+    @StateObject private var volumeHandler = VolumeButtonHandler()
     private let filters: [Filter] = [
         NaturalFilter(),
         WarmFilter(),
@@ -434,6 +438,20 @@ struct ContentView: View {
                 print("Camera resumed")
             }
         }
+        .onChange(of: volumeHandler.volumeButtonPressed) { _ in
+            takePhoto()
+        }
+    }
+
+    private func takePhoto() {
+        guard isPhotoMode else { return }
+        HapticFeedback.impact()
+        cameraManager.capturePhoto { image in
+            if let image = image {
+                capturedPhoto = image
+                savePhotoToLibrary(image: image)
+            }
+        }
     }
 
     private func formatTime(_ seconds: Int) -> String {
@@ -535,6 +553,77 @@ struct ContentView: View {
         cameraManager.setRetouchRadius(retouchRadius)
         cameraManager.setSkinBrightness(skinBrightness)
         cameraManager.setSkinWarmth(skinWarmth)
+    }
+}
+
+// MARK: - Volume Button Handler
+class VolumeButtonHandler: ObservableObject {
+    @Published var volumeButtonPressed = false
+    private var audioSession: AVAudioSession?
+    private var volumeObserver: NSKeyValueObservation?
+    private var initialVolume: Float = 0.5
+    private var isResettingVolume = false
+    private var volumeView: MPVolumeView?
+    private var volumeSlider: UISlider?
+
+    init() {
+        setupVolumeView()
+        setupVolumeObserver()
+    }
+
+    private func setupVolumeView() {
+        // Create volume view once and keep reference to slider
+        volumeView = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
+        volumeSlider = volumeView?.subviews.first(where: { $0 is UISlider }) as? UISlider
+    }
+
+    private func setupVolumeObserver() {
+        audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession?.setActive(true)
+            initialVolume = audioSession?.outputVolume ?? 0.5
+        } catch {
+            print("Failed to set audio session active: \(error)")
+        }
+
+        // Observe volume changes
+        volumeObserver = audioSession?.observe(\.outputVolume, options: [.new, .old]) { [weak self] _, change in
+            guard let self = self,
+                  let newVolume = change.newValue,
+                  let oldVolume = change.oldValue else { return }
+
+            // Ignore if we're programmatically resetting volume
+            guard !self.isResettingVolume else { return }
+
+            // Detect volume button press (ignore small changes)
+            if abs(newVolume - oldVolume) > 0.01 {
+                // Reset volume FIRST, then trigger photo after a short delay
+                self.resetVolume {
+                    DispatchQueue.main.async {
+                        self.volumeButtonPressed.toggle()
+                    }
+                }
+            }
+        }
+    }
+
+    private func resetVolume(completion: @escaping () -> Void) {
+        isResettingVolume = true
+        DispatchQueue.main.async {
+            self.volumeSlider?.value = self.initialVolume
+            // Wait for volume to settle, then trigger photo
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                completion()
+                // Reset flag after completion
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    self.isResettingVolume = false
+                }
+            }
+        }
+    }
+
+    deinit {
+        volumeObserver?.invalidate()
     }
 }
 
