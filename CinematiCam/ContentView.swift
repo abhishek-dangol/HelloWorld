@@ -35,6 +35,11 @@ struct ContentView: View {
     @State private var capturedPhoto: UIImage?
     @State private var showPhotoPreview = false
 
+    // Photo capture animation
+    @State private var thumbnailPhoto: UIImage?
+    @State private var showCaptureFlash = false
+    @State private var captureAnimationPhase: CaptureAnimationPhase = .idle
+
     // Inline retouch controls
     @State private var selectedRetouchParam = 0
     @State private var retouchAmount: Float = 0.5
@@ -407,9 +412,58 @@ struct ContentView: View {
                 .navigationBarTitleDisplayMode(.inline)
             }
         }
+        // Capture flash effect
+        .overlay {
+            if showCaptureFlash {
+                Color.white
+                    .ignoresSafeArea()
+            }
+        }
+        // Capture animation (full screen to thumbnail)
+        .overlay {
+            if captureAnimationPhase != .idle, let photo = capturedPhoto {
+                GeometryReader { geometry in
+                    Image(uiImage: photo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(
+                            width: captureAnimationPhase == .fullScreen ? geometry.size.width : 70,
+                            height: captureAnimationPhase == .fullScreen ? geometry.size.height : 70
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: captureAnimationPhase == .fullScreen ? 0 : 10))
+                        .position(
+                            x: captureAnimationPhase == .fullScreen ? geometry.size.width / 2 : 50,
+                            y: captureAnimationPhase == .fullScreen ? geometry.size.height / 2 : geometry.size.height - 120
+                        )
+                }
+                .ignoresSafeArea()
+            }
+        }
+        // Thumbnail at bottom left
+        .overlay(alignment: .bottomLeading) {
+            if let thumbnail = thumbnailPhoto, captureAnimationPhase == .idle {
+                Button {
+                    openPhotosApp()
+                } label: {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 70, height: 70)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white, lineWidth: 2)
+                        )
+                        .shadow(radius: 5)
+                }
+                .padding(.leading, 15)
+                .padding(.bottom, 50)
+            }
+        }
+        // Video saved toast (keep for videos only)
         .overlay(alignment: .center) {
             if showSavedToast {
-                Text("Saved!")
+                Text("Video Saved!")
                     .font(.headline)
                     .foregroundColor(.white)
                     .padding(.horizontal, 24)
@@ -449,6 +503,32 @@ struct ContentView: View {
         cameraManager.capturePhoto { image in
             if let image = image {
                 capturedPhoto = image
+
+                // Start capture animation
+                withAnimation(.easeOut(duration: 0.1)) {
+                    showCaptureFlash = true
+                }
+
+                // Flash off, show full image
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    showCaptureFlash = false
+                    captureAnimationPhase = .fullScreen
+                }
+
+                // Animate to thumbnail
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        captureAnimationPhase = .thumbnail
+                    }
+                }
+
+                // Set thumbnail and hide animation
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                    thumbnailPhoto = image
+                    captureAnimationPhase = .idle
+                }
+
+                // Save to library
                 savePhotoToLibrary(image: image)
             }
         }
@@ -496,14 +576,6 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     if success {
                         print("Photo saved to Photos!")
-                        withAnimation {
-                            showSavedToast = true
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            withAnimation {
-                                showSavedToast = false
-                            }
-                        }
                     } else {
                         print("Error saving photo: \(error?.localizedDescription ?? "unknown")")
                     }
@@ -554,6 +626,18 @@ struct ContentView: View {
         cameraManager.setSkinBrightness(skinBrightness)
         cameraManager.setSkinWarmth(skinWarmth)
     }
+    private func openPhotosApp() {
+        if let url = URL(string: "photos-redirect://") {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Capture Animation Phase
+enum CaptureAnimationPhase {
+    case idle
+    case fullScreen
+    case thumbnail
 }
 
 // MARK: - Volume Button Handler
