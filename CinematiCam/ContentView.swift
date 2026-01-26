@@ -6,16 +6,535 @@
 //
 
 import SwiftUI
+import Photos
+import UIKit
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    private let permissionsManager = PermissionsManager()
+    @StateObject private var cameraManager = CameraManager()
+    @State private var showPermissionDeniedAlert = false
+    @State private var isBackCamera = false
+    @State private var isFlashOn = false
+    @State private var blurIntensity: Double = 0.5 // 0 = f/8 (min blur), 1 = f/1.4 (max blur)
+    @State private var isRecording = false
+    @State private var recordingSeconds = 0
+    @State private var recordingTimer: Timer?
+    @State private var recordingDotOpacity = 1.0
+    @State private var showSavedToast = false
+    @State private var showSettings = false
+    @AppStorage("selectedFilter") private var selectedFilterName = "Natural"
+    @AppStorage("videoQuality") private var videoQuality = "1080p"
+    @AppStorage("showGrid") private var showGrid = false
+    @State private var filterIntensity: Double = 0.8
+    @State private var retouchEnabled = false
+    @State private var isPhotoMode = false
+    @State private var capturedPhoto: UIImage?
+    @State private var showPhotoPreview = false
+
+    // Inline retouch controls
+    @State private var selectedRetouchParam = 0
+    @State private var retouchAmount: Float = 0.5
+    @State private var retouchRadius: Float = 9.0
+    @State private var skinBrightness: Float = 0.0
+    @State private var skinWarmth: Float = 0.0
+    private let filters: [Filter] = [
+        NaturalFilter(),
+        WarmFilter(),
+        CoolFilter(),
+        VintageFilter(),
+        BWFilter(),
+        VividFilter()
+    ]
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        ZStack {
+            // Raw camera preview (fallback)
+            CameraPreviewView(session: cameraManager.captureSession)
+                .ignoresSafeArea()
+
+            // Filtered preview overlay
+            if cameraManager.filteredPreview != nil {
+                FilteredPreviewView(image: cameraManager.filteredPreview)
+                    .ignoresSafeArea()
+            }
+
+            // Rule of thirds grid
+            if showGrid {
+                GeometryReader { geometry in
+                    Path { path in
+                        let width = geometry.size.width
+                        let height = geometry.size.height
+
+                        // Vertical lines
+                        path.move(to: CGPoint(x: width / 3, y: 0))
+                        path.addLine(to: CGPoint(x: width / 3, y: height))
+                        path.move(to: CGPoint(x: width * 2 / 3, y: 0))
+                        path.addLine(to: CGPoint(x: width * 2 / 3, y: height))
+
+                        // Horizontal lines
+                        path.move(to: CGPoint(x: 0, y: height / 3))
+                        path.addLine(to: CGPoint(x: width, y: height / 3))
+                        path.move(to: CGPoint(x: 0, y: height * 2 / 3))
+                        path.addLine(to: CGPoint(x: width, y: height * 2 / 3))
+                    }
+                    .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                }
+                .ignoresSafeArea()
+            }
         }
-        .padding()
+        // Top right controls (flash, rotate, settings, retouch)
+        .overlay(alignment: .topTrailing) {
+            VStack(spacing: 12) {
+                // Flash button (only visible for back camera)
+                if isBackCamera {
+                    Button {
+                        HapticFeedback.impact()
+                        isFlashOn = cameraManager.toggleFlash()
+                    } label: {
+                        Image(systemName: isFlashOn ? "bolt.fill" : "bolt.slash")
+                            .font(.title2)
+                            .foregroundColor(isFlashOn ? .yellow : .white)
+                            .padding(12)
+                            .background(Color.black.opacity(0.4))
+                            .clipShape(Circle())
+                    }
+                    .disabled(isRecording)
+                }
+
+                // Rotate camera
+                Button {
+                    HapticFeedback.impact()
+                    cameraManager.switchCamera()
+                    isBackCamera.toggle()
+                } label: {
+                    Image(systemName: "camera.rotate")
+                        .font(.title2)
+                        .foregroundColor(.white)
+                        .padding(12)
+                        .background(Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .disabled(isRecording)
+
+                // Settings
+                Button {
+                    HapticFeedback.impact()
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.title2)
+                        .foregroundColor(.white)
+                        .padding(12)
+                        .background(Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .disabled(isRecording)
+
+                // Retouch
+                Button {
+                    HapticFeedback.impact()
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        retouchEnabled.toggle()
+                    }
+                    cameraManager.setRetouch(retouchEnabled)
+                    if retouchEnabled {
+                        updateCameraRetouchParams()
+                    }
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                        .font(.title2)
+                        .foregroundColor(retouchEnabled ? .yellow : .white)
+                        .padding(12)
+                        .background(retouchEnabled ? Color.yellow.opacity(0.3) : Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .disabled(isRecording)
+            }
+            .padding(.trailing, 16)
+            .padding(.top, 60)
+            .opacity(isRecording ? 0 : 1)
+            .animation(.easeInOut(duration: 0.3), value: isRecording)
+        }
+        // Recording indicator (top center)
+        .overlay(alignment: .top) {
+            if isRecording {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 10, height: 10)
+                        .opacity(recordingDotOpacity)
+                    Text(formatTime(recordingSeconds))
+                        .font(.system(size: 18, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(8)
+                .padding(.top, 60)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                        recordingDotOpacity = 0.3
+                    }
+                }
+                .onDisappear {
+                    recordingDotOpacity = 1.0
+                }
+            }
+        }
+        // Bottom controls (filters, sliders, capture button)
+        .overlay(alignment: .bottom) {
+            VStack(spacing: 12) {
+                // Retouch controls (when enabled)
+                if retouchEnabled && !isRecording {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            ForEach(0..<4) { index in
+                                let paramIcons = ["wand.and.rays", "circle.hexagongrid", "sun.max", "thermometer.sun"]
+                                let paramNames = ["Smooth", "Radius", "Glow", "Warmth"]
+                                Button {
+                                    HapticFeedback.impact()
+                                    selectedRetouchParam = index
+                                } label: {
+                                    VStack(spacing: 2) {
+                                        Image(systemName: paramIcons[index])
+                                            .font(.system(size: 14))
+                                        Text(paramNames[index])
+                                            .font(.system(size: 9))
+                                    }
+                                    .foregroundColor(selectedRetouchParam == index ? .yellow : .white.opacity(0.7))
+                                    .frame(width: 60, height: 36)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(selectedRetouchParam == index ? Color.yellow.opacity(0.15) : Color.black.opacity(0.2))
+                                    )
+                                }
+                            }
+                        }
+
+                        HStack {
+                            Text(currentParamName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white)
+                                .frame(width: 55, alignment: .leading)
+                            Slider(value: currentParamBinding, in: currentParamRange)
+                                .tint(.yellow)
+                                .onChange(of: retouchAmount) { _ in updateCameraRetouchParams() }
+                                .onChange(of: retouchRadius) { _ in updateCameraRetouchParams() }
+                                .onChange(of: skinBrightness) { _ in updateCameraRetouchParams() }
+                                .onChange(of: skinWarmth) { _ in updateCameraRetouchParams() }
+                            Text(currentParamValueText)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundColor(.yellow)
+                                .frame(width: 45, alignment: .trailing)
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                    .padding(.horizontal, 8)
+                    .transition(.opacity)
+                }
+
+                // Filter carousel
+                if !isRecording {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(0..<filters.count, id: \.self) { index in
+                                Button {
+                                    HapticFeedback.impact()
+                                    selectedFilterName = filters[index].name
+                                    cameraManager.setFilter(filters[index])
+                                    cameraManager.setFilterIntensity(filterIntensity)
+                                } label: {
+                                    FilterThumbnailView(
+                                        filter: filters[index],
+                                        isSelected: selectedFilterName == filters[index].name
+                                    )
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+
+                // Filter intensity slider
+                if selectedFilterName != "Natural" && !isRecording {
+                    HStack {
+                        Image(systemName: "circle.lefthalf.filled")
+                            .foregroundColor(.white.opacity(0.7))
+                        Slider(value: $filterIntensity, in: 0...1)
+                            .tint(.yellow)
+                            .onChange(of: filterIntensity) { newValue in
+                                cameraManager.setFilterIntensity(newValue)
+                            }
+                        Text("\(Int(filterIntensity * 100))%")
+                            .foregroundColor(.white)
+                            .font(.system(size: 14, weight: .medium))
+                            .frame(width: 40)
+                    }
+                    .padding(.horizontal, 24)
+                }
+
+                // Photo/Video toggle slider
+                if !isRecording {
+                    HStack(spacing: 0) {
+                        Button {
+                            HapticFeedback.impact()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isPhotoMode = false
+                            }
+                        } label: {
+                            Text("Video")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(isPhotoMode ? .white.opacity(0.6) : .black)
+                                .frame(width: 70, height: 32)
+                                .background(
+                                    Capsule()
+                                        .fill(isPhotoMode ? Color.clear : Color.white)
+                                )
+                        }
+
+                        Button {
+                            HapticFeedback.impact()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isPhotoMode = true
+                            }
+                        } label: {
+                            Text("Photo")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(isPhotoMode ? .black : .white.opacity(0.6))
+                                .frame(width: 70, height: 32)
+                                .background(
+                                    Capsule()
+                                        .fill(isPhotoMode ? Color.white : Color.clear)
+                                )
+                        }
+                    }
+                    .padding(4)
+                    .background(
+                        Capsule()
+                            .fill(Color.black.opacity(0.4))
+                    )
+                }
+
+                // Capture button
+                Button {
+                    HapticFeedback.impact()
+                    if isPhotoMode {
+                        cameraManager.capturePhoto { image in
+                            if let image = image {
+                                capturedPhoto = image
+                                savePhotoToLibrary(image: image)
+                            }
+                        }
+                    } else {
+                        if isRecording {
+                            recordingTimer?.invalidate()
+                            recordingTimer = nil
+                            cameraManager.stopRecording { url in
+                                if let url = url {
+                                    saveToPhotoLibrary(url: url)
+                                }
+                            }
+                            recordingSeconds = 0
+                        } else {
+                            cameraManager.startRecording(quality: videoQuality)
+                            recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                                recordingSeconds += 1
+                            }
+                        }
+                        isRecording.toggle()
+                    }
+                } label: {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white, lineWidth: 4)
+                            .frame(width: 80, height: 80)
+
+                        if isPhotoMode {
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 64, height: 64)
+                        } else {
+                            RoundedRectangle(cornerRadius: isRecording ? 8 : 32)
+                                .fill(Color.red)
+                                .frame(width: isRecording ? 32 : 64, height: isRecording ? 32 : 64)
+                                .animation(.easeInOut(duration: 0.2), value: isRecording)
+                        }
+                    }
+                }
+                .padding(.bottom, 30)
+            }
+            .padding(.bottom, 20)
+        }
+        .onAppear {
+            permissionsManager.requestCameraPermission { granted in
+                if granted {
+                    cameraManager.configure()
+                    cameraManager.startSession()
+                    // Restore saved filter or default to Natural
+                    let savedFilter = filters.first { $0.name == selectedFilterName } ?? filters[0]
+                    cameraManager.setFilter(savedFilter)
+                    cameraManager.setFilterIntensity(filterIntensity)
+                } else {
+                    showPermissionDeniedAlert = true
+                }
+            }
+        }
+        .alert("Camera Access Required", isPresented: $showPermissionDeniedAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Camera access is required. Please enable in Settings.")
+        }
+        .sheet(isPresented: $showSettings) {
+            NavigationView {
+                List {
+                    Section("Video") {
+                        Picker("Quality", selection: $videoQuality) {
+                            Text("4K").tag("4K")
+                            Text("1080p").tag("1080p")
+                            Text("720p").tag("720p")
+                        }
+                    }
+                    Section("Guides") {
+                        Toggle("Rule of Thirds Grid", isOn: $showGrid)
+                    }
+                }
+                .navigationTitle("Settings")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .overlay(alignment: .center) {
+            if showSavedToast {
+                Text("Saved!")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.7))
+                    .cornerRadius(10)
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .background {
+                if isRecording {
+                    recordingTimer?.invalidate()
+                    recordingTimer = nil
+                    cameraManager.stopRecording { url in
+                        if let url = url {
+                            saveToPhotoLibrary(url: url)
+                        }
+                    }
+                    recordingSeconds = 0
+                    isRecording = false
+                    print("Recording saved due to background")
+                }
+            } else if newPhase == .active {
+                cameraManager.startSession()
+                print("Camera resumed")
+            }
+        }
+    }
+
+    private func formatTime(_ seconds: Int) -> String {
+        let minutes = seconds / 60
+        let remainingSeconds = seconds % 60
+        return String(format: "%02d:%02d", minutes, remainingSeconds)
+    }
+
+    private func saveToPhotoLibrary(url: URL) {
+        permissionsManager.requestPhotoLibraryPermission { granted in
+            guard granted else { return }
+
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            } completionHandler: { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        print("Video saved to Photos!")
+                        withAnimation {
+                            showSavedToast = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation {
+                                showSavedToast = false
+                            }
+                        }
+                    } else {
+                        print("Error saving to Photos: \(error?.localizedDescription ?? "unknown")")
+                    }
+                }
+            }
+        }
+    }
+
+    private func savePhotoToLibrary(image: UIImage) {
+        permissionsManager.requestPhotoLibraryPermission { granted in
+            guard granted else { return }
+
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            } completionHandler: { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        print("Photo saved to Photos!")
+                        withAnimation {
+                            showSavedToast = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation {
+                                showSavedToast = false
+                            }
+                        }
+                    } else {
+                        print("Error saving photo: \(error?.localizedDescription ?? "unknown")")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Retouch Helper Properties
+
+    private var currentParamName: String {
+        ["Smooth", "Radius", "Glow", "Warmth"][selectedRetouchParam]
+    }
+
+    private var currentParamBinding: Binding<Float> {
+        switch selectedRetouchParam {
+        case 0: return $retouchAmount
+        case 1: return $retouchRadius
+        case 2: return $skinBrightness
+        case 3: return $skinWarmth
+        default: return $retouchAmount
+        }
+    }
+
+    private var currentParamRange: ClosedRange<Float> {
+        switch selectedRetouchParam {
+        case 0: return 0...1
+        case 1: return 1...15
+        case 2: return -0.1...0.2
+        case 3: return -0.3...0.3
+        default: return 0...1
+        }
+    }
+
+    private var currentParamValueText: String {
+        switch selectedRetouchParam {
+        case 0: return "\(Int(retouchAmount * 100))%"
+        case 1: return String(format: "%.1f", retouchRadius)
+        case 2: return String(format: "%+.0f%%", skinBrightness * 100)
+        case 3: return String(format: "%+.0f", skinWarmth * 100)
+        default: return ""
+        }
+    }
+
+    private func updateCameraRetouchParams() {
+        cameraManager.setRetouchAmount(retouchAmount)
+        cameraManager.setRetouchRadius(retouchRadius)
+        cameraManager.setSkinBrightness(skinBrightness)
+        cameraManager.setSkinWarmth(skinWarmth)
     }
 }
 
