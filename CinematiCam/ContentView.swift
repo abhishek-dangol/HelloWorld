@@ -38,6 +38,14 @@ struct ContentView: View {
     @State private var capturedPhoto: UIImage?
     @State private var showPhotoPreview = false
 
+    // Teleprompter
+    @State private var teleprompterText: String = ""
+    @State private var showTeleprompterSheet = false
+    @State private var teleprompterEnabled = false
+    @State private var teleprompterScrollSpeed: Int = 2
+    @State private var teleprompterScrollOffset: CGFloat = 0
+    @State private var teleprompterTimer: Timer? = nil
+
     // Photo capture animation
     @State private var thumbnailPhoto: UIImage?
     @State private var thumbnailVideo: UIImage?
@@ -98,6 +106,15 @@ struct ContentView: View {
                     .stroke(Color.white.opacity(0.5), lineWidth: 1)
                 }
                 .ignoresSafeArea()
+            }
+        }
+        // Teleprompter overlay
+        .overlay {
+            if teleprompterEnabled && !teleprompterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                TeleprompterOverlayView(
+                    text: teleprompterText,
+                    scrollOffset: teleprompterScrollOffset
+                )
             }
         }
         // Top right controls (flash, rotate, settings, retouch)
@@ -164,6 +181,20 @@ struct ContentView: View {
                         .foregroundColor(retouchEnabled ? .yellow : .white)
                         .padding(12)
                         .background(retouchEnabled ? Color.yellow.opacity(0.3) : Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .disabled(isRecording)
+
+                // Teleprompter
+                Button {
+                    HapticFeedback.impact()
+                    showTeleprompterSheet = true
+                } label: {
+                    Image(systemName: "text.justify.leading")
+                        .font(.title2)
+                        .foregroundColor(teleprompterEnabled ? .yellow : .white)
+                        .padding(12)
+                        .background(teleprompterEnabled ? Color.yellow.opacity(0.3) : Color.black.opacity(0.4))
                         .clipShape(Circle())
                 }
                 .disabled(isRecording)
@@ -531,6 +562,7 @@ struct ContentView: View {
                                 isRecordingPaused = false
                                 hasRecordedSegments = false
                                 recordingSeconds = 0
+                                resetTeleprompterScroll()
                             } label: {
                                 ZStack {
                                     Circle()
@@ -595,6 +627,7 @@ struct ContentView: View {
                 isRecordingPaused = false
                 hasRecordedSegments = false
                 recordingSeconds = 0
+                resetTeleprompterScroll()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
@@ -611,6 +644,7 @@ struct ContentView: View {
                 isRecordingPaused = false
                 hasRecordedSegments = false
                 recordingSeconds = 0
+                resetTeleprompterScroll()
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isPhotoMode = true
                 }
@@ -622,6 +656,7 @@ struct ContentView: View {
                 isRecordingPaused = false
                 hasRecordedSegments = false
                 recordingSeconds = 0
+                resetTeleprompterScroll()
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isPhotoMode = true
                 }
@@ -647,6 +682,13 @@ struct ContentView: View {
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
             }
+        }
+        .sheet(isPresented: $showTeleprompterSheet) {
+            TeleprompterInputView(
+                scriptText: $teleprompterText,
+                scrollSpeed: $teleprompterScrollSpeed,
+                isEnabled: $teleprompterEnabled
+            )
         }
         // Capture flash effect
         .overlay {
@@ -720,6 +762,13 @@ struct ContentView: View {
         }
         .onChange(of: volumeHandler.volumeButtonPressed) { _ in
             handleVolumeButtonPress()
+        }
+        .onChange(of: isRecording) { recording in
+            if recording {
+                startTeleprompterScroll()
+            } else {
+                stopTeleprompterScroll()
+            }
         }
     }
 
@@ -921,6 +970,27 @@ struct ContentView: View {
         cameraManager.setSkinBrightness(skinBrightness)
         cameraManager.setSkinWarmth(skinWarmth)
     }
+    // MARK: - Teleprompter Scrolling
+
+    private func startTeleprompterScroll() {
+        guard teleprompterEnabled, !teleprompterText.isEmpty else { return }
+        teleprompterTimer?.invalidate()
+        let pixelsPerTick = CGFloat(teleprompterScrollSpeed) * 0.25
+        teleprompterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { _ in
+            teleprompterScrollOffset += pixelsPerTick
+        }
+    }
+
+    private func stopTeleprompterScroll() {
+        teleprompterTimer?.invalidate()
+        teleprompterTimer = nil
+    }
+
+    private func resetTeleprompterScroll() {
+        stopTeleprompterScroll()
+        teleprompterScrollOffset = 0
+    }
+
     private func openPhotosApp() {
         if let url = URL(string: "photos-redirect://") {
             UIApplication.shared.open(url)
