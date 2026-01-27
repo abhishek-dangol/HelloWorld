@@ -10,6 +10,7 @@ import Photos
 import UIKit
 import MediaPlayer
 import AVFoundation
+import AudioToolbox
 import Combine
 
 struct ContentView: View {
@@ -52,6 +53,8 @@ struct ContentView: View {
     @State private var showUndoAlert = false
     @State private var showDiscardAlert = false
     @State private var showSwitchToPhotoAlert = false
+    @State private var countdownValue: Int = 0
+    @State private var countdownScale: CGFloat = 1.0
     @StateObject private var volumeHandler = VolumeButtonHandler()
     private let filters: [Filter] = [
         NaturalFilter(),
@@ -170,34 +173,47 @@ struct ContentView: View {
             .opacity(isRecording ? 0 : 1)
             .animation(.easeInOut(duration: 0.3), value: isRecording)
         }
-        // Recording indicator (top center)
+        // Recording indicator (top center, vintage camcorder style)
         .overlay(alignment: .top) {
             if isRecording || isRecordingPaused {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     if isRecordingPaused {
-                        // Paused indicator
                         Image(systemName: "pause.fill")
-                            .font(.system(size: 12))
+                            .font(.system(size: 10))
+                            .foregroundColor(.yellow)
+                        Text("PAUSED")
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
                             .foregroundColor(.yellow)
                     } else {
-                        // Recording dot
                         Circle()
                             .fill(Color.red)
                             .frame(width: 10, height: 10)
                             .opacity(recordingDotOpacity)
+                        Text("REC")
+                            .font(.system(size: 14, weight: .bold, design: .monospaced))
+                            .foregroundColor(.red)
+                            .opacity(recordingDotOpacity)
                     }
                     Text(formatTime(recordingSeconds))
-                        .font(.system(size: 18, weight: .medium, design: .monospaced))
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundColor(.white)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
                 .background(Color.black.opacity(0.6))
-                .cornerRadius(8)
+                .cornerRadius(6)
                 .padding(.top, 60)
                 .onAppear {
                     withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
                         recordingDotOpacity = 0.3
+                    }
+                }
+                .onChange(of: isRecording) { recording in
+                    if recording {
+                        recordingDotOpacity = 1.0
+                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                            recordingDotOpacity = 0.3
+                        }
                     }
                 }
                 .onDisappear {
@@ -475,14 +491,7 @@ struct ContentView: View {
                                 isRecording = true
                                 isRecordingPaused = false
                             } else {
-                                cameraManager.startRecording(quality: videoQuality)
-                                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                                    recordingSeconds += 1
-                                }
-                                isRecording = true
-                                isRecordingPaused = false
-                                hasRecordedSegments = false
-                                thumbnailVideo = nil
+                                startRecordingWithCountdown()
                             }
                         } label: {
                             ZStack {
@@ -506,6 +515,7 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        .disabled(countdownValue > 0)
 
                         // Right slot: Finish button (checkmark) when paused with segments
                         if isRecordingPaused && hasRecordedSegments {
@@ -665,6 +675,19 @@ struct ContentView: View {
                 .ignoresSafeArea()
             }
         }
+        // Countdown overlay
+        .overlay {
+            if countdownValue > 0 {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                    Text("\(countdownValue)")
+                        .font(.system(size: 200, weight: .heavy, design: .rounded))
+                        .foregroundColor(.red)
+                        .scaleEffect(countdownScale)
+                }
+            }
+        }
         // Video saved toast (keep for videos only)
         .overlay(alignment: .center) {
             if showSavedToast {
@@ -701,6 +724,7 @@ struct ContentView: View {
     }
 
     private func handleVolumeButtonPress() {
+        guard countdownValue == 0 else { return }
         HapticFeedback.impact()
 
         if isPhotoMode {
@@ -724,15 +748,47 @@ struct ContentView: View {
                 isRecording = true
                 isRecordingPaused = false
             } else {
-                // Start new recording
-                cameraManager.startRecording(quality: videoQuality)
-                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                    recordingSeconds += 1
-                }
-                isRecording = true
-                isRecordingPaused = false
-                hasRecordedSegments = false
+                startRecordingWithCountdown()
             }
+        }
+    }
+
+    private func startRecordingWithCountdown() {
+        guard countdownValue == 0 else { return }
+        countdownValue = 3
+        countdownScale = 1.0
+        AudioServicesPlaySystemSound(1113)
+        animateCountdownNumber()
+
+        func tick(remaining: Int) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                if remaining > 1 {
+                    countdownScale = 1.0
+                    countdownValue = remaining - 1
+                    AudioServicesPlaySystemSound(1113)
+                    animateCountdownNumber()
+                    tick(remaining: remaining - 1)
+                } else {
+                    countdownValue = 0
+                    // Start actual recording
+                    cameraManager.startRecording(quality: videoQuality)
+                    recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                        recordingSeconds += 1
+                    }
+                    isRecording = true
+                    isRecordingPaused = false
+                    hasRecordedSegments = false
+                    thumbnailVideo = nil
+                }
+            }
+        }
+        tick(remaining: 3)
+    }
+
+    private func animateCountdownNumber() {
+        countdownScale = 1.2
+        withAnimation(.easeOut(duration: 0.3)) {
+            countdownScale = 1.0
         }
     }
 
