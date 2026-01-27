@@ -39,6 +39,7 @@ struct ContentView: View {
 
     // Photo capture animation
     @State private var thumbnailPhoto: UIImage?
+    @State private var thumbnailVideo: UIImage?
     @State private var showCaptureFlash = false
     @State private var captureAnimationPhase: CaptureAnimationPhase = .idle
 
@@ -48,6 +49,9 @@ struct ContentView: View {
     @State private var retouchRadius: Float = 9.0
     @State private var skinBrightness: Float = 0.0
     @State private var skinWarmth: Float = 0.0
+    @State private var showUndoAlert = false
+    @State private var showDiscardAlert = false
+    @State private var showSwitchToPhotoAlert = false
     @StateObject private var volumeHandler = VolumeButtonHandler()
     private let filters: [Filter] = [
         NaturalFilter(),
@@ -314,8 +318,12 @@ struct ContentView: View {
 
                         Button {
                             HapticFeedback.impact()
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isPhotoMode = true
+                            if isRecordingPaused && hasRecordedSegments {
+                                showSwitchToPhotoAlert = true
+                            } else {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isPhotoMode = true
+                                }
                             }
                         } label: {
                             Text("Photo")
@@ -337,58 +345,122 @@ struct ContentView: View {
 
                 // Recording controls - TikTok style
                 if isPhotoMode {
-                    // Photo capture button
-                    Button {
-                        takePhoto()
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .stroke(Color.white, lineWidth: 4)
-                                .frame(width: 80, height: 80)
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 64, height: 64)
-                        }
-                    }
-                    .padding(.bottom, 30)
-                } else {
-                    // Video recording controls - TikTok style
+                    // Photo capture button with thumbnail
+                    // 3 slots to match video layout: [left] [center] [right]
                     HStack(spacing: 30) {
-                        // Undo button (left of record) - only when paused with segments
-                        if isRecordingPaused && hasRecordedSegments {
+                        // Left slot: photo thumbnail
+                        if let thumbnail = thumbnailPhoto, captureAnimationPhase == .idle {
                             Button {
-                                HapticFeedback.impact()
-                                let segmentCountBefore = cameraManager.getSegmentCount()
-                                if cameraManager.undoLastSegment() {
-                                    // Reduce timer by approximate segment duration
-                                    recordingSeconds = max(0, recordingSeconds - 3)
-                                    // If no more segments, reset state
-                                    if segmentCountBefore <= 1 {
-                                        hasRecordedSegments = false
-                                        isRecordingPaused = false
-                                        recordingSeconds = 0
-                                    }
-                                }
+                                openPhotosApp()
                             } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.black.opacity(0.5))
-                                        .frame(width: 50, height: 50)
-                                    Image(systemName: "arrow.uturn.backward")
-                                        .font(.system(size: 20, weight: .bold))
-                                        .foregroundColor(.white)
-                                }
+                                Image(uiImage: thumbnail)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 50, height: 50)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.white, lineWidth: 2)
+                                    )
                             }
                         } else {
                             Color.clear
                                 .frame(width: 50, height: 50)
                         }
 
-                        // Record/Pause button (center)
+                        // Center: capture button
+                        Button {
+                            takePhoto()
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 4)
+                                    .frame(width: 80, height: 80)
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 64, height: 64)
+                            }
+                        }
+
+                        // Right slot: empty spacer
+                        Color.clear
+                            .frame(width: 50, height: 50)
+                    }
+                    .padding(.bottom, 30)
+                } else {
+                    // Video recording controls - TikTok style
+                    // 3 slots: [left] [center record] [right] to match photo layout
+                    HStack(spacing: 30) {
+                        // Left slot: fixed 50pt layout width, overflow visible
+                        ZStack {
+                            Color.clear
+                                .frame(width: 50, height: 50)
+
+                            if isRecordingPaused && hasRecordedSegments {
+                                HStack(spacing: 8) {
+                                    Button {
+                                        HapticFeedback.impact()
+                                        showDiscardAlert = true
+                                    } label: {
+                                        ZStack {
+                                            Circle()
+                                                .fill(Color.black.opacity(0.5))
+                                                .frame(width: 40, height: 40)
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 16, weight: .bold))
+                                                .foregroundColor(.white)
+                                        }
+                                    }
+                                    Button {
+                                        HapticFeedback.impact()
+                                        showUndoAlert = true
+                                    } label: {
+                                        ZStack {
+                                            Circle()
+                                                .fill(Color.black.opacity(0.5))
+                                                .frame(width: 40, height: 40)
+                                            Image(systemName: "arrow.uturn.backward")
+                                                .font(.system(size: 16, weight: .bold))
+                                                .foregroundColor(.white)
+                                        }
+                                    }
+                                }
+                            } else if isRecording {
+                                Button {
+                                    HapticFeedback.impact()
+                                    showDiscardAlert = true
+                                } label: {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color.black.opacity(0.5))
+                                            .frame(width: 50, height: 50)
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 20, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                            } else if let videoThumb = thumbnailVideo {
+                                Button {
+                                    openPhotosApp()
+                                } label: {
+                                    Image(uiImage: videoThumb)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 50, height: 50)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.white, lineWidth: 2)
+                                        )
+                                }
+                            }
+                        }
+                        .frame(width: 50, height: 50)
+
+                        // Center: Record/Pause button
                         Button {
                             HapticFeedback.impact()
                             if isRecording {
-                                // Pause recording
                                 cameraManager.pauseRecording()
                                 recordingTimer?.invalidate()
                                 recordingTimer = nil
@@ -396,7 +468,6 @@ struct ContentView: View {
                                 isRecordingPaused = true
                                 hasRecordedSegments = true
                             } else if isRecordingPaused {
-                                // Resume recording
                                 cameraManager.resumeRecording()
                                 recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
                                     recordingSeconds += 1
@@ -404,7 +475,6 @@ struct ContentView: View {
                                 isRecording = true
                                 isRecordingPaused = false
                             } else {
-                                // Start new recording
                                 cameraManager.startRecording(quality: videoQuality)
                                 recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
                                     recordingSeconds += 1
@@ -412,6 +482,7 @@ struct ContentView: View {
                                 isRecording = true
                                 isRecordingPaused = false
                                 hasRecordedSegments = false
+                                thumbnailVideo = nil
                             }
                         } label: {
                             ZStack {
@@ -421,9 +492,8 @@ struct ContentView: View {
 
                                 Circle()
                                     .fill(Color.red)
-                                    .frame(width: isRecording ? 64 : 64, height: isRecording ? 64 : 64)
+                                    .frame(width: 64, height: 64)
 
-                                // Show pause icon when recording
                                 if isRecording {
                                     RoundedRectangle(cornerRadius: 2)
                                         .fill(Color.white)
@@ -437,40 +507,13 @@ struct ContentView: View {
                             }
                         }
 
-                        // Discard button (X)
-                        if isRecording || isRecordingPaused || hasRecordedSegments {
-                            Button {
-                                HapticFeedback.impact()
-                                // Discard all segments
-                                recordingTimer?.invalidate()
-                                recordingTimer = nil
-                                cameraManager.discardAllSegments()
-                                isRecording = false
-                                isRecordingPaused = false
-                                hasRecordedSegments = false
-                                recordingSeconds = 0
-                            } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.black.opacity(0.5))
-                                        .frame(width: 50, height: 50)
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 20, weight: .bold))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        } else {
-                            Color.clear
-                                .frame(width: 50, height: 50)
-                        }
-
-                        // Finish button (checkmark) - only when paused with segments
+                        // Right slot: Finish button (checkmark) when paused with segments
                         if isRecordingPaused && hasRecordedSegments {
                             Button {
                                 HapticFeedback.impact()
-                                // Finish and save all segments
                                 cameraManager.stopRecording { url in
                                     if let url = url {
+                                        generateVideoThumbnail(from: url)
                                         saveToPhotoLibrary(url: url)
                                     }
                                 }
@@ -517,6 +560,66 @@ struct ContentView: View {
         } message: {
             Text("Camera access is required. Please enable in Settings.")
         }
+        .alert("Delete Last Clip?", isPresented: $showUndoAlert) {
+            Button("Delete", role: .destructive) {
+                let segmentCountBefore = cameraManager.getSegmentCount()
+                if cameraManager.undoLastSegment() {
+                    recordingSeconds = max(0, recordingSeconds - 3)
+                    if segmentCountBefore <= 1 {
+                        hasRecordedSegments = false
+                        isRecordingPaused = false
+                        recordingSeconds = 0
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Are you sure you want to delete the last recorded clip?")
+        }
+        .alert("Discard All Clips?", isPresented: $showDiscardAlert) {
+            Button("Discard", role: .destructive) {
+                recordingTimer?.invalidate()
+                recordingTimer = nil
+                cameraManager.discardAllSegments()
+                isRecording = false
+                isRecordingPaused = false
+                hasRecordedSegments = false
+                recordingSeconds = 0
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Are you sure you want to discard all recorded clips? This cannot be undone.")
+        }
+        .alert("Unsaved Recording", isPresented: $showSwitchToPhotoAlert) {
+            Button("Save & Switch", role: .none) {
+                cameraManager.stopRecording { url in
+                    if let url = url {
+                        generateVideoThumbnail(from: url)
+                        saveToPhotoLibrary(url: url)
+                    }
+                }
+                isRecordingPaused = false
+                hasRecordedSegments = false
+                recordingSeconds = 0
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isPhotoMode = true
+                }
+            }
+            Button("Discard & Switch", role: .destructive) {
+                recordingTimer?.invalidate()
+                recordingTimer = nil
+                cameraManager.discardAllSegments()
+                isRecordingPaused = false
+                hasRecordedSegments = false
+                recordingSeconds = 0
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isPhotoMode = true
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("You have an unsaved recording. Would you like to save or discard it before switching to Photo mode?")
+        }
         .sheet(isPresented: $showSettings) {
             NavigationView {
                 List {
@@ -555,32 +658,11 @@ struct ContentView: View {
                         )
                         .clipShape(RoundedRectangle(cornerRadius: captureAnimationPhase == .fullScreen ? 0 : 10))
                         .position(
-                            x: captureAnimationPhase == .fullScreen ? geometry.size.width / 2 : geometry.size.width - 50,
+                            x: captureAnimationPhase == .fullScreen ? geometry.size.width / 2 : 65,
                             y: captureAnimationPhase == .fullScreen ? geometry.size.height / 2 : geometry.size.height - 85
                         )
                 }
                 .ignoresSafeArea()
-            }
-        }
-        // Thumbnail at bottom right
-        .overlay(alignment: .bottomTrailing) {
-            if let thumbnail = thumbnailPhoto, captureAnimationPhase == .idle {
-                Button {
-                    openPhotosApp()
-                } label: {
-                    Image(uiImage: thumbnail)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 70, height: 70)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white, lineWidth: 2)
-                        )
-                        .shadow(radius: 5)
-                }
-                .padding(.trailing, 15)
-                .padding(.bottom, 50)
             }
         }
         // Video saved toast (keep for videos only)
@@ -786,6 +868,21 @@ struct ContentView: View {
     private func openPhotosApp() {
         if let url = URL(string: "photos-redirect://") {
             UIApplication.shared.open(url)
+        }
+    }
+
+    private func generateVideoThumbnail(from url: URL) {
+        let asset = AVAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 200, height: 200)
+        let time = CMTime(seconds: 0.5, preferredTimescale: 600)
+        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, cgImage, _, _, _ in
+            if let cgImage = cgImage {
+                DispatchQueue.main.async {
+                    thumbnailVideo = UIImage(cgImage: cgImage)
+                }
+            }
         }
     }
 }
