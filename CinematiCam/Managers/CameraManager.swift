@@ -258,6 +258,30 @@ class CameraManager: NSObject, ObservableObject {
         videoRecorder.startRecording()
     }
 
+    func pauseRecording() {
+        videoRecorder.pauseRecording()
+    }
+
+    func resumeRecording() {
+        videoRecorder.resumeRecording()
+    }
+
+    func undoLastSegment() -> Bool {
+        return videoRecorder.undoLastSegment()
+    }
+
+    func discardAllSegments() {
+        videoRecorder.discardAllSegments()
+    }
+
+    func hasRecordedSegments() -> Bool {
+        return videoRecorder.hasSegments()
+    }
+
+    func getSegmentCount() -> Int {
+        return videoRecorder.getSegmentCount()
+    }
+
     func stopRecording(completion: @escaping (URL?) -> Void) {
         videoRecorder.stopRecording(completion: completion)
     }

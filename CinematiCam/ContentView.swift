@@ -21,6 +21,8 @@ struct ContentView: View {
     @State private var isFlashOn = false
     @State private var blurIntensity: Double = 0.5 // 0 = f/8 (min blur), 1 = f/1.4 (max blur)
     @State private var isRecording = false
+    @State private var isRecordingPaused = false
+    @State private var hasRecordedSegments = false
     @State private var recordingSeconds = 0
     @State private var recordingTimer: Timer?
     @State private var recordingDotOpacity = 1.0
@@ -166,12 +168,20 @@ struct ContentView: View {
         }
         // Recording indicator (top center)
         .overlay(alignment: .top) {
-            if isRecording {
+            if isRecording || isRecordingPaused {
                 HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 10, height: 10)
-                        .opacity(recordingDotOpacity)
+                    if isRecordingPaused {
+                        // Paused indicator
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.yellow)
+                    } else {
+                        // Recording dot
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 10, height: 10)
+                            .opacity(recordingDotOpacity)
+                    }
                     Text(formatTime(recordingSeconds))
                         .font(.system(size: 18, weight: .medium, design: .monospaced))
                         .foregroundColor(.white)
@@ -325,53 +335,166 @@ struct ContentView: View {
                     )
                 }
 
-                // Capture button
-                Button {
-                    HapticFeedback.impact()
-                    if isPhotoMode {
-                        cameraManager.capturePhoto { image in
-                            if let image = image {
-                                capturedPhoto = image
-                                savePhotoToLibrary(image: image)
-                            }
-                        }
-                    } else {
-                        if isRecording {
-                            recordingTimer?.invalidate()
-                            recordingTimer = nil
-                            cameraManager.stopRecording { url in
-                                if let url = url {
-                                    saveToPhotoLibrary(url: url)
-                                }
-                            }
-                            recordingSeconds = 0
-                        } else {
-                            cameraManager.startRecording(quality: videoQuality)
-                            recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                                recordingSeconds += 1
-                            }
-                        }
-                        isRecording.toggle()
-                    }
-                } label: {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white, lineWidth: 4)
-                            .frame(width: 80, height: 80)
-
-                        if isPhotoMode {
+                // Recording controls - TikTok style
+                if isPhotoMode {
+                    // Photo capture button
+                    Button {
+                        takePhoto()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white, lineWidth: 4)
+                                .frame(width: 80, height: 80)
                             Circle()
                                 .fill(Color.white)
                                 .frame(width: 64, height: 64)
-                        } else {
-                            RoundedRectangle(cornerRadius: isRecording ? 8 : 32)
-                                .fill(Color.red)
-                                .frame(width: isRecording ? 32 : 64, height: isRecording ? 32 : 64)
-                                .animation(.easeInOut(duration: 0.2), value: isRecording)
                         }
                     }
+                    .padding(.bottom, 30)
+                } else {
+                    // Video recording controls - TikTok style
+                    HStack(spacing: 30) {
+                        // Undo button (left of record) - only when paused with segments
+                        if isRecordingPaused && hasRecordedSegments {
+                            Button {
+                                HapticFeedback.impact()
+                                let segmentCountBefore = cameraManager.getSegmentCount()
+                                if cameraManager.undoLastSegment() {
+                                    // Reduce timer by approximate segment duration
+                                    recordingSeconds = max(0, recordingSeconds - 3)
+                                    // If no more segments, reset state
+                                    if segmentCountBefore <= 1 {
+                                        hasRecordedSegments = false
+                                        isRecordingPaused = false
+                                        recordingSeconds = 0
+                                    }
+                                }
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.black.opacity(0.5))
+                                        .frame(width: 50, height: 50)
+                                    Image(systemName: "arrow.uturn.backward")
+                                        .font(.system(size: 20, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        } else {
+                            Color.clear
+                                .frame(width: 50, height: 50)
+                        }
+
+                        // Record/Pause button (center)
+                        Button {
+                            HapticFeedback.impact()
+                            if isRecording {
+                                // Pause recording
+                                cameraManager.pauseRecording()
+                                recordingTimer?.invalidate()
+                                recordingTimer = nil
+                                isRecording = false
+                                isRecordingPaused = true
+                                hasRecordedSegments = true
+                            } else if isRecordingPaused {
+                                // Resume recording
+                                cameraManager.resumeRecording()
+                                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                                    recordingSeconds += 1
+                                }
+                                isRecording = true
+                                isRecordingPaused = false
+                            } else {
+                                // Start new recording
+                                cameraManager.startRecording(quality: videoQuality)
+                                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                                    recordingSeconds += 1
+                                }
+                                isRecording = true
+                                isRecordingPaused = false
+                                hasRecordedSegments = false
+                            }
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .stroke(isRecording || isRecordingPaused ? Color.red.opacity(0.5) : Color.white, lineWidth: 4)
+                                    .frame(width: 80, height: 80)
+
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: isRecording ? 64 : 64, height: isRecording ? 64 : 64)
+
+                                // Show pause icon when recording
+                                if isRecording {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color.white)
+                                        .frame(width: 8, height: 24)
+                                        .offset(x: -8)
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color.white)
+                                        .frame(width: 8, height: 24)
+                                        .offset(x: 8)
+                                }
+                            }
+                        }
+
+                        // Discard button (X)
+                        if isRecording || isRecordingPaused || hasRecordedSegments {
+                            Button {
+                                HapticFeedback.impact()
+                                // Discard all segments
+                                recordingTimer?.invalidate()
+                                recordingTimer = nil
+                                cameraManager.discardAllSegments()
+                                isRecording = false
+                                isRecordingPaused = false
+                                hasRecordedSegments = false
+                                recordingSeconds = 0
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.black.opacity(0.5))
+                                        .frame(width: 50, height: 50)
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 20, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        } else {
+                            Color.clear
+                                .frame(width: 50, height: 50)
+                        }
+
+                        // Finish button (checkmark) - only when paused with segments
+                        if isRecordingPaused && hasRecordedSegments {
+                            Button {
+                                HapticFeedback.impact()
+                                // Finish and save all segments
+                                cameraManager.stopRecording { url in
+                                    if let url = url {
+                                        saveToPhotoLibrary(url: url)
+                                    }
+                                }
+                                isRecording = false
+                                isRecordingPaused = false
+                                hasRecordedSegments = false
+                                recordingSeconds = 0
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.red.opacity(0.8))
+                                        .frame(width: 50, height: 50)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 20, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        } else {
+                            Color.clear
+                                .frame(width: 50, height: 50)
+                        }
+                    }
+                    .padding(.bottom, 30)
                 }
-                .padding(.bottom, 30)
             }
             .padding(.bottom, 20)
         }
@@ -432,15 +555,15 @@ struct ContentView: View {
                         )
                         .clipShape(RoundedRectangle(cornerRadius: captureAnimationPhase == .fullScreen ? 0 : 10))
                         .position(
-                            x: captureAnimationPhase == .fullScreen ? geometry.size.width / 2 : 50,
-                            y: captureAnimationPhase == .fullScreen ? geometry.size.height / 2 : geometry.size.height - 120
+                            x: captureAnimationPhase == .fullScreen ? geometry.size.width / 2 : geometry.size.width - 50,
+                            y: captureAnimationPhase == .fullScreen ? geometry.size.height / 2 : geometry.size.height - 85
                         )
                 }
                 .ignoresSafeArea()
             }
         }
-        // Thumbnail at bottom left
-        .overlay(alignment: .bottomLeading) {
+        // Thumbnail at bottom right
+        .overlay(alignment: .bottomTrailing) {
             if let thumbnail = thumbnailPhoto, captureAnimationPhase == .idle {
                 Button {
                     openPhotosApp()
@@ -456,7 +579,7 @@ struct ContentView: View {
                         )
                         .shadow(radius: 5)
                 }
-                .padding(.leading, 15)
+                .padding(.trailing, 15)
                 .padding(.bottom, 50)
             }
         }
@@ -476,16 +599,14 @@ struct ContentView: View {
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .background {
                 if isRecording {
+                    // Pause recording when going to background (TikTok style)
+                    cameraManager.pauseRecording()
                     recordingTimer?.invalidate()
                     recordingTimer = nil
-                    cameraManager.stopRecording { url in
-                        if let url = url {
-                            saveToPhotoLibrary(url: url)
-                        }
-                    }
-                    recordingSeconds = 0
                     isRecording = false
-                    print("Recording saved due to background")
+                    isRecordingPaused = true
+                    hasRecordedSegments = true
+                    print("Recording paused due to background")
                 }
             } else if newPhase == .active {
                 cameraManager.startSession()
@@ -493,7 +614,43 @@ struct ContentView: View {
             }
         }
         .onChange(of: volumeHandler.volumeButtonPressed) { _ in
+            handleVolumeButtonPress()
+        }
+    }
+
+    private func handleVolumeButtonPress() {
+        HapticFeedback.impact()
+
+        if isPhotoMode {
             takePhoto()
+        } else {
+            // Toggle video recording (pause/resume)
+            if isRecording {
+                // Pause recording
+                cameraManager.pauseRecording()
+                recordingTimer?.invalidate()
+                recordingTimer = nil
+                isRecording = false
+                isRecordingPaused = true
+                hasRecordedSegments = true
+            } else if isRecordingPaused {
+                // Resume recording
+                cameraManager.resumeRecording()
+                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                    recordingSeconds += 1
+                }
+                isRecording = true
+                isRecordingPaused = false
+            } else {
+                // Start new recording
+                cameraManager.startRecording(quality: videoQuality)
+                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                    recordingSeconds += 1
+                }
+                isRecording = true
+                isRecordingPaused = false
+                hasRecordedSegments = false
+            }
         }
     }
 
