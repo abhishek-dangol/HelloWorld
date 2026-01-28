@@ -8,10 +8,10 @@ struct TeleprompterOverlayView: View {
     var body: some View {
         GeometryReader { geometry in
             let overlayHeight = geometry.size.height * 0.35
-            let overlayWidth = geometry.size.width - 32
+            let overlayWidth = geometry.size.width - 48
             let cornerRadius: CGFloat = 16
 
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .topLeading) {
                 // Masked container: everything outside the rounded rect is invisible
                 Color.black.opacity(0.15)
                     .frame(width: overlayWidth, height: overlayHeight)
@@ -64,11 +64,11 @@ struct TeleprompterOverlayView: View {
                         .clipShape(Circle())
                 }
                 .padding(.top, 10)
-                .padding(.trailing, 10)
+                .padding(.leading, 10)
             }
             .frame(width: overlayWidth, height: overlayHeight)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, 90)
+            .padding(.top, 60)
         }
     }
 }

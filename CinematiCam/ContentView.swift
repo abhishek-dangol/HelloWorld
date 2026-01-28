@@ -237,7 +237,7 @@ struct ContentView: View {
                 .padding(.vertical, 5)
                 .background(Color.black.opacity(0.6))
                 .cornerRadius(6)
-                .padding(.top, 60)
+                .padding(.top, 20)
                 .onAppear {
                     withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
                         recordingDotOpacity = 0.3
