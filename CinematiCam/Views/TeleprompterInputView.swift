@@ -1,10 +1,13 @@
 import SwiftUI
+import UIKit
 
 struct TeleprompterInputView: View {
     @Binding var scriptText: String
-    @Binding var scrollSpeed: Int
+    @Binding var scrollSpeed: Double
     @Binding var isEnabled: Bool
     @Environment(\.dismiss) private var dismiss
+
+    private let speedOptions: [Double] = [0.5, 1, 2, 3, 4, 5]
 
     var body: some View {
         NavigationView {
@@ -22,8 +25,8 @@ struct TeleprompterInputView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     Picker("Speed", selection: $scrollSpeed) {
-                        ForEach(1...5, id: \.self) { speed in
-                            Text("\(speed)x").tag(speed)
+                        ForEach(speedOptions, id: \.self) { speed in
+                            Text(speed == 0.5 ? "0.5x" : "\(Int(speed))x").tag(speed)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -32,12 +35,13 @@ struct TeleprompterInputView: View {
                 // Word count + estimated time
                 HStack {
                     let words = scriptText.split(separator: " ").count
-                    let estimatedSeconds = max(0, Double(words) / (Double(scrollSpeed) * 1.5))
+                    let estimatedSeconds = max(0, Double(words) / (scrollSpeed * 1.5))
+                    let speedLabel = scrollSpeed == 0.5 ? "0.5x" : "\(Int(scrollSpeed))x"
                     Text("\(words) words")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("~\(Int(estimatedSeconds))s at \(scrollSpeed)x")
+                    Text("~\(Int(estimatedSeconds))s at \(speedLabel)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

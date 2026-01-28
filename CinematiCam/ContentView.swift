@@ -42,7 +42,7 @@ struct ContentView: View {
     @State private var teleprompterText: String = ""
     @State private var showTeleprompterSheet = false
     @State private var teleprompterEnabled = false
-    @State private var teleprompterScrollSpeed: Int = 2
+    @State private var teleprompterScrollSpeed: Double = 1.0
     @State private var teleprompterScrollOffset: CGFloat = 0
     @State private var teleprompterTimer: Timer? = nil
 
@@ -979,7 +979,7 @@ struct ContentView: View {
     private func startTeleprompterScroll() {
         guard teleprompterEnabled, !teleprompterText.isEmpty else { return }
         teleprompterTimer?.invalidate()
-        let pixelsPerTick = CGFloat(teleprompterScrollSpeed) * 0.25
+        let pixelsPerTick = teleprompterScrollSpeed * 0.25
         teleprompterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { _ in
             teleprompterScrollOffset += pixelsPerTick
         }
