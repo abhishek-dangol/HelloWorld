@@ -3,52 +3,72 @@ import SwiftUI
 struct TeleprompterOverlayView: View {
     let text: String
     let scrollOffset: CGFloat
+    var onDismiss: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
             let overlayHeight = geometry.size.height * 0.35
+            let overlayWidth = geometry.size.width - 32
+            let cornerRadius: CGFloat = 16
 
-            ZStack(alignment: .top) {
-                // Semi-transparent background
+            ZStack(alignment: .topTrailing) {
+                // Masked container: everything outside the rounded rect is invisible
                 Color.black.opacity(0.15)
-                    .frame(height: overlayHeight)
-
-                // Text that starts at bottom of overlay and scrolls up
-                Text(text)
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(8)
-                    .padding(.horizontal, 24)
-                    .fixedSize(horizontal: false, vertical: true)
-                    // Start text at the bottom of the overlay, scroll upward
-                    .offset(y: overlayHeight - 40 - scrollOffset)
-
-                // Fade gradients
-                VStack {
-                    LinearGradient(
-                        colors: [.black.opacity(0.3), .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
+                    .frame(width: overlayWidth, height: overlayHeight)
+                    .overlay(alignment: .topLeading) {
+                        // Text top edge starts at bottom of overlay (only first line visible)
+                        // As scrollOffset increases, text moves up revealing more
+                        Text(text)
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(8)
+                            .padding(.horizontal, 20)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(width: overlayWidth, alignment: .center)
+                            .offset(y: overlayHeight - 36 - scrollOffset)
+                    }
+                    .overlay {
+                        VStack(spacing: 0) {
+                            LinearGradient(
+                                colors: [.black.opacity(0.4), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 40)
+                            Spacer()
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.4)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 40)
+                        }
+                    }
+                    .mask(RoundedRectangle(cornerRadius: cornerRadius))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
                     )
-                    .frame(height: 30)
+                    .allowsHitTesting(false)
 
-                    Spacer()
-
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.3)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 30)
+                // X dismiss button
+                Button {
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Color.black.opacity(0.5))
+                        .clipShape(Circle())
                 }
-                .frame(height: overlayHeight)
+                .padding(.top, 10)
+                .padding(.trailing, 10)
             }
-            .frame(width: geometry.size.width, height: overlayHeight)
-            .clipped()
+            .frame(width: overlayWidth, height: overlayHeight)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.top, 90)
         }
-        .allowsHitTesting(false)
     }
 }
