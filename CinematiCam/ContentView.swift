@@ -33,7 +33,7 @@ struct ContentView: View {
     @AppStorage("videoQuality") private var videoQuality = "1080p"
     @AppStorage("showGrid") private var showGrid = false
     @State private var filterIntensity: Double = 0.8
-    @State private var retouchEnabled = false
+    @State private var showRetouchControls = false
     @State private var isPhotoMode = false
     @State private var capturedPhoto: UIImage?
     @State private var showPhotoPreview = false
@@ -55,11 +55,11 @@ struct ContentView: View {
     @State private var captureAnimationPhase: CaptureAnimationPhase = .idle
 
     // Inline retouch controls
-    @State private var selectedRetouchParam = 0
+    @State private var selectedRetouchParam = 1 // default to Smooth selected
     @State private var retouchAmount: Float = 0.5
-    @State private var retouchRadius: Float = 9.0
-    @State private var skinBrightness: Float = 0.0
-    @State private var skinWarmth: Float = 0.0
+    @State private var retouchRadius: Float = 10.0
+    @State private var savedRetouchAmount: Float = 0.5
+    @State private var savedRetouchRadius: Float = 10.0
     @State private var showUndoAlert = false
     @State private var showDiscardAlert = false
     @State private var showSwitchToPhotoAlert = false
@@ -175,18 +175,14 @@ struct ContentView: View {
                 Button {
                     HapticFeedback.impact()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        retouchEnabled.toggle()
-                    }
-                    cameraManager.setRetouch(retouchEnabled)
-                    if retouchEnabled {
-                        updateCameraRetouchParams()
+                        showRetouchControls.toggle()
                     }
                 } label: {
                     Image(systemName: "wand.and.stars")
                         .font(.title2)
-                        .foregroundColor(retouchEnabled ? .yellow : .white)
+                        .foregroundColor(.white)
                         .padding(12)
-                        .background(retouchEnabled ? Color.yellow.opacity(0.3) : Color.black.opacity(0.4))
+                        .background(Color.black.opacity(0.4))
                         .clipShape(Circle())
                 }
                 .disabled(isRecording)
@@ -277,16 +273,31 @@ struct ContentView: View {
         // Bottom controls (filters, sliders, capture button)
         .overlay(alignment: .bottom) {
             VStack(spacing: 12) {
-                // Retouch controls (when enabled)
-                if retouchEnabled && !isRecording {
+                // Retouch controls (when enabled and controls visible)
+                if showRetouchControls && !isRecording {
                     VStack(spacing: 8) {
                         HStack(spacing: 4) {
-                            ForEach(0..<4) { index in
-                                let paramIcons = ["wand.and.rays", "circle.hexagongrid", "sun.max", "thermometer.sun"]
-                                let paramNames = ["Smooth", "Radius", "Glow", "Warmth"]
+                            ForEach(0..<3) { index in
+                                let paramIcons = ["face.dashed", "wand.and.rays", "circle.hexagongrid"]
+                                let paramNames = ["Natural", "Smooth", "Radius"]
                                 Button {
                                     HapticFeedback.impact()
                                     selectedRetouchParam = index
+                                    if index == 0 {
+                                        // Natural: save current values, then zero out
+                                        if retouchAmount > 0 || retouchRadius > 1 {
+                                            savedRetouchAmount = retouchAmount
+                                            savedRetouchRadius = retouchRadius
+                                        }
+                                        retouchAmount = 0
+                                        retouchRadius = 0
+                                        updateCameraRetouchParams()
+                                    } else if retouchAmount == 0 && retouchRadius == 0 {
+                                        // Coming from Natural: restore saved values
+                                        retouchAmount = savedRetouchAmount
+                                        retouchRadius = savedRetouchRadius
+                                        updateCameraRetouchParams()
+                                    }
                                 } label: {
                                     VStack(spacing: 2) {
                                         Image(systemName: paramIcons[index])
@@ -304,23 +315,23 @@ struct ContentView: View {
                             }
                         }
 
-                        HStack {
-                            Text(currentParamName)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white)
-                                .frame(width: 55, alignment: .leading)
-                            Slider(value: currentParamBinding, in: currentParamRange)
-                                .tint(.yellow)
-                                .onChange(of: retouchAmount) { _ in updateCameraRetouchParams() }
-                                .onChange(of: retouchRadius) { _ in updateCameraRetouchParams() }
-                                .onChange(of: skinBrightness) { _ in updateCameraRetouchParams() }
-                                .onChange(of: skinWarmth) { _ in updateCameraRetouchParams() }
-                            Text(currentParamValueText)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundColor(.yellow)
-                                .frame(width: 45, alignment: .trailing)
+                        if selectedRetouchParam != 0 {
+                            HStack {
+                                Text(currentParamName)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.white)
+                                    .frame(width: 55, alignment: .leading)
+                                Slider(value: currentParamBinding, in: currentParamRange)
+                                    .tint(.yellow)
+                                    .onChange(of: retouchAmount) { _ in updateCameraRetouchParams() }
+                                    .onChange(of: retouchRadius) { _ in updateCameraRetouchParams() }
+                                Text(currentParamValueText)
+                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.yellow)
+                                    .frame(width: 45, alignment: .trailing)
+                            }
+                            .padding(.horizontal, 16)
                         }
-                        .padding(.horizontal, 16)
                     }
                     .padding(.horizontal, 8)
                     .transition(.opacity)
@@ -615,6 +626,9 @@ struct ContentView: View {
                     let savedFilter = filters.first { $0.name == selectedFilterName } ?? filters[0]
                     cameraManager.setFilter(savedFilter)
                     cameraManager.setFilterIntensity(filterIntensity)
+                    // Apply default skin smoothing
+                    cameraManager.setRetouch(true)
+                    updateCameraRetouchParams()
                 } else {
                     showPermissionDeniedAlert = true
                 }
@@ -954,35 +968,29 @@ struct ContentView: View {
     // MARK: - Retouch Helper Properties
 
     private var currentParamName: String {
-        ["Smooth", "Radius", "Glow", "Warmth"][selectedRetouchParam]
+        ["Natural", "Smooth", "Radius"][selectedRetouchParam]
     }
 
     private var currentParamBinding: Binding<Float> {
         switch selectedRetouchParam {
-        case 0: return $retouchAmount
-        case 1: return $retouchRadius
-        case 2: return $skinBrightness
-        case 3: return $skinWarmth
+        case 1: return $retouchAmount
+        case 2: return $retouchRadius
         default: return $retouchAmount
         }
     }
 
     private var currentParamRange: ClosedRange<Float> {
         switch selectedRetouchParam {
-        case 0: return 0...1
-        case 1: return 1...15
-        case 2: return -0.1...0.2
-        case 3: return -0.3...0.3
+        case 1: return 0...1
+        case 2: return 1...15
         default: return 0...1
         }
     }
 
     private var currentParamValueText: String {
         switch selectedRetouchParam {
-        case 0: return "\(Int(retouchAmount * 100))%"
-        case 1: return String(format: "%.1f", retouchRadius)
-        case 2: return String(format: "%+.0f%%", skinBrightness * 100)
-        case 3: return String(format: "%+.0f", skinWarmth * 100)
+        case 1: return "\(Int(retouchAmount * 100))%"
+        case 2: return String(format: "%.1f", retouchRadius)
         default: return ""
         }
     }
@@ -990,8 +998,8 @@ struct ContentView: View {
     private func updateCameraRetouchParams() {
         cameraManager.setRetouchAmount(retouchAmount)
         cameraManager.setRetouchRadius(retouchRadius)
-        cameraManager.setSkinBrightness(skinBrightness)
-        cameraManager.setSkinWarmth(skinWarmth)
+        cameraManager.setSkinBrightness(0)
+        cameraManager.setSkinWarmth(0)
     }
     // MARK: - Teleprompter Scrolling
 
