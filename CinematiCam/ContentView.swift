@@ -38,6 +38,8 @@ struct ContentView: View {
     @State private var capturedPhoto: UIImage?
     @State private var showPhotoPreview = false
 
+    @State private var showFilters = false
+
     // Teleprompter
     @State private var teleprompterText: String = ""
     @State private var showTeleprompterSheet = false
@@ -202,6 +204,22 @@ struct ContentView: View {
                         .clipShape(Circle())
                 }
                 .disabled(isRecording)
+
+                // Filters
+                Button {
+                    HapticFeedback.impact()
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        showFilters.toggle()
+                    }
+                } label: {
+                    Image(systemName: "camera.filters")
+                        .font(.title2)
+                        .foregroundColor(showFilters ? .yellow : .white)
+                        .padding(12)
+                        .background(showFilters ? Color.yellow.opacity(0.3) : Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .disabled(isRecording)
             }
             .padding(.trailing, 16)
             .padding(.top, 60)
@@ -309,7 +327,7 @@ struct ContentView: View {
                 }
 
                 // Filter carousel
-                if !isRecording {
+                if showFilters && !isRecording {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
                             ForEach(0..<filters.count, id: \.self) { index in
@@ -328,10 +346,11 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 16)
                     }
+                    .transition(.opacity)
                 }
 
                 // Filter intensity slider
-                if selectedFilterName != "Natural" && !isRecording {
+                if showFilters && selectedFilterName != "Natural" && !isRecording {
                     HStack {
                         Image(systemName: "circle.lefthalf.filled")
                             .foregroundColor(.white.opacity(0.7))
