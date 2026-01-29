@@ -54,6 +54,15 @@ struct ContentView: View {
     @State private var showCaptureFlash = false
     @State private var captureAnimationPhase: CaptureAnimationPhase = .idle
 
+    // Captions
+    @State private var showCaptionOptions = false
+    @State private var recordedVideoURL: URL?
+    @State private var showCaptionEditor = false
+    @State private var captions: [CaptionSegment] = []
+    @State private var isTranscribing = false
+    private let speechManager = SpeechRecognitionManager()
+    private let captionRenderer = CaptionRenderer()
+
     // Inline retouch controls
     @State private var selectedRetouchParam = 1 // default to Smooth selected
     @State private var retouchAmount: Float = 0.5
@@ -588,8 +597,11 @@ struct ContentView: View {
                                 HapticFeedback.impact()
                                 cameraManager.stopRecording { url in
                                     if let url = url {
+                                        recordedVideoURL = url
                                         generateVideoThumbnail(from: url)
+                                        // Save immediately, then show caption option
                                         saveToPhotoLibrary(url: url)
+                                        showCaptionOptions = true
                                     }
                                 }
                                 isRecording = false
@@ -726,6 +738,74 @@ struct ContentView: View {
                 scrollSpeed: $teleprompterScrollSpeed,
                 isEnabled: $teleprompterEnabled
             )
+        }
+        // Add Captions overlay after saving
+        .overlay {
+            if showCaptionOptions {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            showCaptionOptions = false
+                            transcribeAndShowEditor()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "captions.bubble")
+                                    .font(.system(size: 18, weight: .semibold))
+                                Text("Add Captions")
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .cornerRadius(25)
+                        }
+
+                        Button {
+                            showCaptionOptions = false
+                            recordedVideoURL = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(12)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                        }
+                        Spacer()
+                    }
+                    .padding(.bottom, 120)
+                }
+            }
+        }
+        .sheet(isPresented: $showCaptionEditor) {
+            if let url = recordedVideoURL {
+                CaptionEditorView(
+                    videoURL: url,
+                    captions: $captions,
+                    onExport: {
+                        exportWithCaptions()
+                    }
+                )
+            }
+        }
+        .overlay {
+            if isTranscribing {
+                ZStack {
+                    Color.black.opacity(0.6)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        Text("Transcribing...")
+                            .foregroundColor(.white)
+                            .font(.headline)
+                    }
+                }
+            }
         }
         // Capture flash effect
         .overlay {
@@ -1040,6 +1120,49 @@ struct ContentView: View {
                     thumbnailVideo = UIImage(cgImage: cgImage)
                 }
             }
+        }
+    }
+
+    // MARK: - Caption Methods
+
+    private func transcribeAndShowEditor() {
+        guard let url = recordedVideoURL else { return }
+
+        isTranscribing = true
+
+        // iOS will automatically show permission dialog on first use
+        speechManager.transcribe(videoURL: url) { segments, error in
+            isTranscribing = false
+
+            if let segments = segments, !segments.isEmpty {
+                captions = segments
+                showCaptionEditor = true
+            } else {
+                // No speech detected or error
+                print("Transcription failed or no speech: \(error?.localizedDescription ?? "no speech")")
+                recordedVideoURL = nil
+            }
+        }
+    }
+
+    private func exportWithCaptions() {
+        guard let url = recordedVideoURL else { return }
+
+        showCaptionEditor = false
+        isTranscribing = true
+
+        captionRenderer.renderCaptions(videoURL: url, captions: captions) { outputURL, error in
+            isTranscribing = false
+
+            if let outputURL = outputURL {
+                // Save the captioned version (original already saved)
+                saveToPhotoLibrary(url: outputURL)
+            } else {
+                print("Caption render failed: \(error?.localizedDescription ?? "unknown")")
+            }
+
+            recordedVideoURL = nil
+            captions = []
         }
     }
 }

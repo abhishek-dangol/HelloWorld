@@ -8,5 +8,7 @@
 	<string>CinematiCam needs microphone access to record audio with your videos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>CinematiCam needs access to save videos to your library.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>CinematiCam needs speech recognition to generate captions for your videos.</string>
 </dict>
 </plist>
