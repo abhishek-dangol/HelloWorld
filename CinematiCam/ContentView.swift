@@ -81,10 +81,8 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             // Filtered preview overlay
-            if cameraManager.filteredPreview != nil {
-                FilteredPreviewView(image: cameraManager.filteredPreview)
-                    .ignoresSafeArea()
-            }
+            FilteredPreviewView(image: cameraManager.filteredPreview)
+                .ignoresSafeArea()
 
             // Rule of thirds grid
             if showGrid {
@@ -178,11 +176,12 @@ struct ContentView: View {
                         showRetouchControls.toggle()
                     }
                 } label: {
+                    let isActive = retouchAmount > 0 || retouchRadius > 0
                     Image(systemName: "wand.and.stars")
                         .font(.title2)
-                        .foregroundColor(.white)
+                        .foregroundColor(isActive ? .yellow : .white)
                         .padding(12)
-                        .background(Color.black.opacity(0.4))
+                        .background(isActive ? Color.yellow.opacity(0.3) : Color.black.opacity(0.4))
                         .clipShape(Circle())
                 }
                 .disabled(isRecording)
@@ -219,8 +218,9 @@ struct ContentView: View {
             }
             .padding(.trailing, 16)
             .padding(.top, 60)
-            .opacity(isRecording ? 0 : 1)
+            .opacity(isRecording || countdownValue > 0 ? 0 : 1)
             .animation(.easeInOut(duration: 0.3), value: isRecording)
+            .animation(.easeInOut(duration: 0.2), value: countdownValue)
         }
         // Recording indicator (top center, vintage camcorder style)
         .overlay(alignment: .top) {

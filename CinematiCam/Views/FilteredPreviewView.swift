@@ -5,12 +5,12 @@ struct FilteredPreviewView: View {
     let image: UIImage?
 
     var body: some View {
-        if let image = image {
-            Image(uiImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } else {
-            Color.black
+        GeometryReader { _ in
+            if let image = image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
         }
     }
 }
