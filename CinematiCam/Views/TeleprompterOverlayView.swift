@@ -2,8 +2,10 @@ import SwiftUI
 
 struct TeleprompterOverlayView: View {
     let text: String
-    let scrollOffset: CGFloat
+    @Binding var scrollOffset: CGFloat
     var onDismiss: () -> Void
+
+    @State private var lastDragValue: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -50,7 +52,20 @@ struct TeleprompterOverlayView: View {
                         RoundedRectangle(cornerRadius: cornerRadius)
                             .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
                     )
-                    .allowsHitTesting(false)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                // Dragging up (negative translation) = increase offset (scroll forward)
+                                // Dragging down (positive translation) = decrease offset (scroll back)
+                                let delta = lastDragValue - value.translation.height
+                                scrollOffset = max(0, scrollOffset + delta)
+                                lastDragValue = value.translation.height
+                            }
+                            .onEnded { _ in
+                                lastDragValue = 0
+                            }
+                    )
 
                 // X dismiss button
                 Button {

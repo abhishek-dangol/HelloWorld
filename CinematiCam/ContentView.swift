@@ -113,7 +113,7 @@ struct ContentView: View {
             if teleprompterEnabled && !teleprompterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 TeleprompterOverlayView(
                     text: teleprompterText,
-                    scrollOffset: teleprompterScrollOffset,
+                    scrollOffset: $teleprompterScrollOffset,
                     onDismiss: {
                         teleprompterEnabled = false
                         resetTeleprompterScroll()
