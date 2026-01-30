@@ -32,7 +32,7 @@ struct VideoEditorView: View {
     // Player state
     @State private var player: AVPlayer?
     @State private var isPlaying: Bool = false
-    @State private var timeObserver: Any?
+    @StateObject private var displayLinkController = DisplayLinkControllerWrapper()
     @State private var videoDuration: Double = 0
 
     var body: some View {
@@ -227,40 +227,40 @@ struct VideoEditorView: View {
         isPlaying = false
         playheadPosition = 0.0
 
-        // Get video duration
+        // Get video duration and configure DisplayLink
         Task {
             let asset = AVAsset(url: videoURL)
             let duration = try? await asset.load(.duration)
             if let duration = duration {
                 await MainActor.run {
                     videoDuration = CMTimeGetSeconds(duration)
+
+                    displayLinkController.controller.configure(
+                        player: newPlayer,
+                        duration: videoDuration,
+                        trimStart: trimStart,
+                        trimEnd: trimEnd,
+                        onPositionUpdate: { position in
+                            guard self.isPlaying else { return }
+                            self.playheadPosition = position
+                        },
+                        onPlaybackEnded: {
+                            self.player?.pause()
+                            self.isPlaying = false
+                            self.displayLinkController.controller.stop()
+
+                            let startTime = CMTime(seconds: self.videoDuration * self.trimStart, preferredTimescale: 600)
+                            self.player?.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                            self.playheadPosition = self.trimStart
+                        }
+                    )
                 }
-            }
-        }
-
-        // Add periodic time observer to sync playhead ONLY when playing
-        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
-        timeObserver = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            guard videoDuration > 0, isPlaying else { return }
-            let currentTime = CMTimeGetSeconds(time)
-            let position = currentTime / videoDuration
-
-            // Update playhead position
-            playheadPosition = position
-
-            // Loop within trim range
-            if position >= trimEnd {
-                let startTime = CMTime(seconds: videoDuration * trimStart, preferredTimescale: 600)
-                newPlayer.seek(to: startTime, toleranceBefore: .zero, toleranceAfter: .zero)
             }
         }
     }
 
     private func cleanupPlayer() {
-        if let observer = timeObserver {
-            player?.removeTimeObserver(observer)
-            timeObserver = nil
-        }
+        displayLinkController.controller.stop()
         player?.pause()
         player = nil
     }
@@ -269,8 +269,10 @@ struct VideoEditorView: View {
         guard let player = player else { return }
         if isPlaying {
             player.pause()
+            displayLinkController.controller.stop()
         } else {
             player.play()
+            displayLinkController.controller.start()
         }
         isPlaying.toggle()
     }
@@ -477,6 +479,7 @@ struct TikTokStyleTimeline: View {
                 // Only sync if the change is significant (avoids feedback loops)
                 let expectedOffset = -newValue * timelineWidth
                 if abs(expectedOffset - lastDragOffset) > 1 {
+                    // Direct update - NO animation (CADisplayLink handles smooth updates)
                     lastDragOffset = expectedOffset
                     dragOffset = 0
                 }
