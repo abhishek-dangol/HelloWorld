@@ -69,35 +69,61 @@ struct VideoEditorView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.top, 12)  // Minimal top padding - pushed up
+                .padding(.bottom, 8)
 
-                // Video preview - smaller and at top (TikTok style)
+                // Video preview - larger for better visibility
                 SyncedVideoPlayerView(
                     url: videoURL,
                     player: $player,
                     isPlaying: $isPlaying
                 )
                 .aspectRatio(9/16, contentMode: .fit)
-                .frame(height: 400)
+                .frame(height: 520)
                 .cornerRadius(12)
                 .clipped()
-                .padding(.horizontal, 40)
-                .padding(.top, 10)
+                .padding(.horizontal, 24)
+                .padding(.top, 4)
 
-                Spacer()
+                Spacer().frame(height: 12)
 
-                // Tools row
-                HStack(spacing: 40) {
+                // Split info text
+                if !splitPoints.isEmpty {
+                    Text("\(splitPoints.count) split\(splitPoints.count == 1 ? "" : "s") • \(segments.count - deletedSegments.count) segments")
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray)
+                        .padding(.bottom, 4)
+                }
+
+                // Timeline with fixed center playhead (TikTok style)
+                TikTokStyleTimeline(
+                    videoURL: videoURL,
+                    videoDuration: videoDuration,
+                    playheadPosition: $playheadPosition,
+                    splitPoints: $splitPoints,
+                    deletedSegments: $deletedSegments,
+                    selectedSegment: $selectedSegment,
+                    onPositionChange: { position in
+                        seekToPosition(position)
+                    }
+                )
+                .frame(height: 144)  // 20% larger again (was 120)
+                .padding(.horizontal, 16)
+
+                Spacer().frame(height: 24)  // Gap between timeline and tools
+
+                // Tools row (below timeline)
+                HStack(spacing: 35) {
                     // Play/Pause button
                     Button {
                         togglePlayback()
                     } label: {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 4) {
                             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 24))
+                                .font(.system(size: 15))
                                 .foregroundColor(.white)
                             Text(isPlaying ? "Pause" : "Play")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11))
                                 .foregroundColor(.white)
                         }
                     }
@@ -106,12 +132,12 @@ struct VideoEditorView: View {
                     Button {
                         addSplitAtPlayhead()
                     } label: {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 4) {
                             Image(systemName: "scissors")
-                                .font(.system(size: 24))
+                                .font(.system(size: 15))
                                 .foregroundColor(.white)
                             Text("Split")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11))
                                 .foregroundColor(.white)
                         }
                     }
@@ -121,12 +147,12 @@ struct VideoEditorView: View {
                         Button {
                             deleteSelectedSegment()
                         } label: {
-                            VStack(spacing: 6) {
+                            VStack(spacing: 4) {
                                 Image(systemName: "trash")
-                                    .font(.system(size: 24))
+                                    .font(.system(size: 15))
                                     .foregroundColor(.red)
                                 Text("Delete")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 11))
                                     .foregroundColor(.red)
                             }
                         }
@@ -136,17 +162,17 @@ struct VideoEditorView: View {
                     Button {
                         showVolumeSlider.toggle()
                     } label: {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 4) {
                             Image(systemName: volume == 0 ? "speaker.slash" : "speaker.wave.2")
-                                .font(.system(size: 24))
+                                .font(.system(size: 15))
                                 .foregroundColor(showVolumeSlider ? .yellow : .white)
                             Text("Volume")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11))
                                 .foregroundColor(showVolumeSlider ? .yellow : .white)
                         }
                     }
                 }
-                .padding(.vertical, 16)
+                .padding(.vertical, 8)
 
                 // Volume slider (when visible)
                 if showVolumeSlider {
@@ -167,30 +193,9 @@ struct VideoEditorView: View {
                     .padding(.bottom, 8)
                 }
 
-                // Split info text
-                if !splitPoints.isEmpty {
-                    Text("\(splitPoints.count) split\(splitPoints.count == 1 ? "" : "s") • \(segments.count - deletedSegments.count) segments")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                        .padding(.bottom, 8)
-                }
-
-                // Timeline with fixed center playhead (TikTok style)
-                TikTokStyleTimeline(
-                    videoURL: videoURL,
-                    playheadPosition: $playheadPosition,
-                    splitPoints: $splitPoints,
-                    deletedSegments: $deletedSegments,
-                    selectedSegment: $selectedSegment,
-                    onPositionChange: { position in
-                        seekToPosition(position)
-                    }
-                )
-                .frame(height: 80)
-                .padding(.horizontal, 16)
-
-                Spacer().frame(height: 40)
+                Spacer().frame(height: 20)
             }
+            .ignoresSafeArea(.container, edges: .top)
         }
         .onAppear {
             setupPlayer()
@@ -320,7 +325,7 @@ struct VideoEditorView: View {
 
 struct TikTokStyleTimeline: View {
     let videoURL: URL
-    let thumbnailCount: Int = 15
+    let videoDuration: Double
 
     @Binding var playheadPosition: Double
     @Binding var splitPoints: [Double]
@@ -336,82 +341,116 @@ struct TikTokStyleTimeline: View {
     @State private var isDragging: Bool = false  // Track drag state to prevent onChange feedback loop
     @State private var localDragPosition: Double? = nil  // Position during active drag (avoids binding updates every frame)
 
-    private let thumbnailWidth: CGFloat = 44
+    // Pinch-to-zoom state
+    @State private var zoomScale: CGFloat = 1.0  // Current zoom level (1.0 = normal, 2.0 = 2x zoomed in)
+    @State private var lastZoomScale: CGFloat = 1.0  // Accumulated zoom from previous pinches
+    @State private var currentThumbnailCount: Int = 15  // Track for regeneration
+
+    // Constants - thumbnail size stays FIXED (never stretches)
+    private let thumbnailWidth: CGFloat = 53
+    private let thumbnailHeight: CGFloat = 80
+    private let baseThumbnailCount: Int = 15
+    private let minZoom: CGFloat = 1.0
+    private let maxZoom: CGFloat = 4.0
+
+    // COMPUTED: Number of thumbnails based on zoom (MORE thumbnails when zoomed in)
+    private var thumbnailCount: Int {
+        Int(CGFloat(baseThumbnailCount) * zoomScale)
+    }
 
     var body: some View {
         GeometryReader { geometry in
-            let timelineWidth = thumbnailWidth * CGFloat(thumbnailCount)
+            let timelineWidth = thumbnailWidth * CGFloat(thumbnails.count > 0 ? thumbnails.count : baseThumbnailCount)
             let centerX = geometry.size.width / 2
 
             // Calculate the total offset (accumulated + current drag)
             let totalOffset = lastDragOffset + dragOffset
 
-            // Timeline position based on offset (clamped to 0...timelineWidth)
-            let clampedOffset = max(0, min(timelineWidth, -totalOffset))
-            let position = clampedOffset / timelineWidth
-
             ZStack {
-                // Draggable timeline content
-                ZStack(alignment: .leading) {
-                    // Thumbnails
+                // Draggable timeline content (timestamps + thumbnails)
+                VStack(spacing: 2) {
+                    // Timestamp row (above thumbnails)
                     HStack(spacing: 0) {
-                        if isLoading {
-                            Rectangle()
-                                .fill(Color.gray.opacity(0.3))
-                                .frame(width: timelineWidth, height: 50)
-                                .overlay {
-                                    ProgressView()
-                                        .tint(.white)
-                                }
-                        } else {
+                        if !isLoading && thumbnails.count > 0 {
                             ForEach(0..<thumbnails.count, id: \.self) { index in
-                                let segmentIndex = getSegmentIndex(for: Double(index) / Double(thumbnailCount))
-
-                                Image(uiImage: thumbnails[index])
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: thumbnailWidth, height: 50)
-                                    .clipped()
-                                    .overlay {
-                                        // Deleted segment overlay
-                                        if deletedSegments.contains(segmentIndex) {
-                                            Color.black.opacity(0.7)
-                                            Image(systemName: "xmark")
-                                                .font(.system(size: 16, weight: .bold))
-                                                .foregroundColor(.red)
-                                        }
-                                        // Selected segment highlight
-                                        else if selectedSegment == segmentIndex {
-                                            Color.yellow.opacity(0.2)
-                                        }
-                                    }
-                                    .onTapGesture {
-                                        if deletedSegments.contains(segmentIndex) {
-                                            // Restore deleted segment
-                                            deletedSegments.remove(segmentIndex)
-                                            selectedSegment = nil
-                                        } else if selectedSegment == segmentIndex {
-                                            // Deselect
-                                            selectedSegment = nil
-                                        } else {
-                                            // Select segment
-                                            selectedSegment = segmentIndex
-                                        }
-                                    }
+                                // Show timestamp every few thumbnails (more frequent when zoomed in)
+                                let showInterval = max(1, thumbnails.count / 10)
+                                if index % showInterval == 0 {
+                                    let timeInSeconds = videoDuration * Double(index) / Double(thumbnails.count)
+                                    Text(formatTime(timeInSeconds))
+                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .foregroundColor(.gray)
+                                        .frame(width: thumbnailWidth * CGFloat(showInterval), alignment: .leading)
+                                }
                             }
+                        } else {
+                            Color.clear.frame(width: timelineWidth, height: 14)
                         }
                     }
+                    .frame(height: 14)
 
-                    // Split lines
-                    ForEach(splitPoints.indices, id: \.self) { index in
-                        let split = splitPoints[index]
-                        Rectangle()
-                            .fill(Color.white)
-                            .frame(width: 3, height: 50)
-                            .offset(x: timelineWidth * split)
+                    // Thumbnails row
+                    ZStack(alignment: .leading) {
+                        HStack(spacing: 0) {
+                            if isLoading {
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: thumbnailWidth * CGFloat(baseThumbnailCount), height: thumbnailHeight)
+                                    .overlay {
+                                        ProgressView()
+                                            .tint(.white)
+                                    }
+                            } else {
+                                ForEach(0..<thumbnails.count, id: \.self) { index in
+                                    let segmentIndex = getSegmentIndex(for: Double(index) / Double(thumbnails.count))
+
+                                    Image(uiImage: thumbnails[index])
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: thumbnailWidth, height: thumbnailHeight)
+                                        .clipped()
+                                        .overlay {
+                                            // Deleted segment overlay
+                                            if deletedSegments.contains(segmentIndex) {
+                                                Color.black.opacity(0.7)
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 16, weight: .bold))
+                                                    .foregroundColor(.red)
+                                            }
+                                            // Selected segment highlight
+                                            else if selectedSegment == segmentIndex {
+                                                Color.yellow.opacity(0.2)
+                                            }
+                                        }
+                                        .onTapGesture {
+                                            if deletedSegments.contains(segmentIndex) {
+                                                // Restore deleted segment
+                                                deletedSegments.remove(segmentIndex)
+                                                selectedSegment = nil
+                                            } else if selectedSegment == segmentIndex {
+                                                // Deselect
+                                                selectedSegment = nil
+                                            } else {
+                                                // Select segment
+                                                selectedSegment = segmentIndex
+                                            }
+                                        }
+                                }
+                            }
+                        }
+                        .cornerRadius(8)
+
+                        // Split lines
+                        ForEach(splitPoints.indices, id: \.self) { index in
+                            let split = splitPoints[index]
+                            Rectangle()
+                                .fill(Color.white)
+                                .frame(width: 3, height: thumbnailHeight)
+                                .offset(x: timelineWidth * split)
+                        }
                     }
+                    .frame(height: thumbnailHeight)
                 }
-                .frame(height: 50)
                 // Position timeline so playhead aligns with center
                 .offset(x: centerX + totalOffset)
                 .gesture(
@@ -450,6 +489,28 @@ struct TikTokStyleTimeline: View {
                             isDragging = false
                         }
                 )
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            // Calculate new zoom scale
+                            let newScale = lastZoomScale * value
+                            zoomScale = min(max(newScale, minZoom), maxZoom)
+                        }
+                        .onEnded { value in
+                            lastZoomScale = zoomScale
+
+                            // Regenerate thumbnails if count changed
+                            let newCount = Int(CGFloat(baseThumbnailCount) * zoomScale)
+                            if newCount != currentThumbnailCount {
+                                // Adjust offset to keep playhead position stable
+                                let newTimelineWidth = thumbnailWidth * CGFloat(newCount)
+                                lastDragOffset = -playheadPosition * newTimelineWidth
+
+                                currentThumbnailCount = newCount
+                                regenerateThumbnails(count: newCount)
+                            }
+                        }
+                )
 
                 // Fixed center playhead (white line)
                 VStack(spacing: 0) {
@@ -461,7 +522,7 @@ struct TikTokStyleTimeline: View {
                     // Vertical line
                     Rectangle()
                         .fill(Color.white)
-                        .frame(width: 2, height: 50)
+                        .frame(width: 2, height: thumbnailHeight + 14 + 2)
 
                     // Bottom handle
                     Circle()
@@ -470,7 +531,6 @@ struct TikTokStyleTimeline: View {
                 }
                 .position(x: centerX, y: geometry.size.height / 2)
             }
-            .cornerRadius(8)
             .clipped()
             // Sync timeline position when playhead changes externally (e.g., during playback)
             .onChange(of: playheadPosition) { newValue in
@@ -486,7 +546,7 @@ struct TikTokStyleTimeline: View {
             }
         }
         .onAppear {
-            generateThumbnails()
+            generateThumbnails(count: baseThumbnailCount)
         }
     }
 
@@ -502,19 +562,29 @@ struct TikTokStyleTimeline: View {
         return validSplits.count
     }
 
-    private func generateThumbnails() {
+    // Format seconds as M:SS
+    private func formatTime(_ seconds: Double) -> String {
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+
+    private func generateThumbnails(count: Int) {
+        isLoading = true
+        let targetCount = count
+
         let asset = AVAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 100, height: 100)
+        generator.maximumSize = CGSize(width: 200, height: 200)  // Higher res for retina displays
 
         Task {
             let duration = try await asset.load(.duration)
             let durationSeconds = CMTimeGetSeconds(duration)
 
             var times: [NSValue] = []
-            for i in 0..<thumbnailCount {
-                let time = CMTime(seconds: durationSeconds * Double(i) / Double(thumbnailCount), preferredTimescale: 600)
+            for i in 0..<targetCount {
+                let time = CMTime(seconds: durationSeconds * Double(i) / Double(targetCount), preferredTimescale: 600)
                 times.append(NSValue(time: time))
             }
 
@@ -538,6 +608,10 @@ struct TikTokStyleTimeline: View {
                 isLoading = false
             }
         }
+    }
+
+    private func regenerateThumbnails(count: Int) {
+        generateThumbnails(count: count)
     }
 }
 
