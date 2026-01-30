@@ -807,9 +807,11 @@ struct ContentView: View {
                         showVideoPreview = false
                     },
                     onEdit: {
-                        // Open video editor
+                        // Open video editor - delay to let preview dismiss first
                         showVideoPreview = false
-                        showVideoEditor = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showVideoEditor = true
+                        }
                     },
                     onSave: {
                         // Save video as-is
@@ -829,20 +831,23 @@ struct ContentView: View {
                         showVideoEditor = false
                         showVideoPreview = true
                     },
-                    onExport: { trimStart, trimEnd in
+                    onExport: { splitPoints, deletedSegments, trimStart, trimEnd, volume in
                         showVideoEditor = false
                         isProcessingVideo = true
 
-                        videoProcessor.trimVideo(
+                        videoProcessor.exportWithSegments(
                             sourceURL: url,
+                            splitPoints: splitPoints,
+                            deletedSegments: deletedSegments,
                             trimStart: trimStart,
-                            trimEnd: trimEnd
+                            trimEnd: trimEnd,
+                            volume: volume
                         ) { outputURL, error in
                             isProcessingVideo = false
                             if let outputURL = outputURL {
                                 saveToPhotoLibrary(url: outputURL)
                             } else {
-                                print("Trim failed: \(error?.localizedDescription ?? "unknown")")
+                                print("Export failed: \(error?.localizedDescription ?? "unknown")")
                             }
                             recordedVideoURL = nil
                         }
