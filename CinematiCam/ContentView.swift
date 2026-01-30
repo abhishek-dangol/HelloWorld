@@ -54,14 +54,20 @@ struct ContentView: View {
     @State private var showCaptureFlash = false
     @State private var captureAnimationPhase: CaptureAnimationPhase = .idle
 
+    // Video Preview & Edit
+    @State private var showVideoPreview = false
+    @State private var showVideoEditor = false
+
     // Captions
     @State private var showCaptionOptions = false
     @State private var recordedVideoURL: URL?
     @State private var showCaptionEditor = false
     @State private var captions: [CaptionSegment] = []
     @State private var isTranscribing = false
+    @State private var isProcessingVideo = false
     private let speechManager = SpeechRecognitionManager()
     private let captionRenderer = CaptionRenderer()
+    private let videoProcessor = VideoProcessor()
 
     // Inline retouch controls
     @State private var selectedRetouchParam = 1 // default to Smooth selected
@@ -599,9 +605,8 @@ struct ContentView: View {
                                     if let url = url {
                                         recordedVideoURL = url
                                         generateVideoThumbnail(from: url)
-                                        // Save immediately, then show caption option
-                                        saveToPhotoLibrary(url: url)
-                                        showCaptionOptions = true
+                                        // Show preview instead of saving immediately
+                                        showVideoPreview = true
                                     }
                                 }
                                 isRecording = false
@@ -791,6 +796,60 @@ struct ContentView: View {
                 )
             }
         }
+        .fullScreenCover(isPresented: $showVideoPreview) {
+            if let url = recordedVideoURL {
+                VideoPreviewView(
+                    videoURL: url,
+                    onDiscard: {
+                        // Delete temp file and return to camera
+                        try? FileManager.default.removeItem(at: url)
+                        recordedVideoURL = nil
+                        showVideoPreview = false
+                    },
+                    onEdit: {
+                        // Open video editor
+                        showVideoPreview = false
+                        showVideoEditor = true
+                    },
+                    onSave: {
+                        // Save video as-is
+                        saveToPhotoLibrary(url: url)
+                        showVideoPreview = false
+                        recordedVideoURL = nil
+                    }
+                )
+            }
+        }
+        .fullScreenCover(isPresented: $showVideoEditor) {
+            if let url = recordedVideoURL {
+                VideoEditorView(
+                    videoURL: url,
+                    onCancel: {
+                        // Return to preview
+                        showVideoEditor = false
+                        showVideoPreview = true
+                    },
+                    onExport: { trimStart, trimEnd in
+                        showVideoEditor = false
+                        isProcessingVideo = true
+
+                        videoProcessor.trimVideo(
+                            sourceURL: url,
+                            trimStart: trimStart,
+                            trimEnd: trimEnd
+                        ) { outputURL, error in
+                            isProcessingVideo = false
+                            if let outputURL = outputURL {
+                                saveToPhotoLibrary(url: outputURL)
+                            } else {
+                                print("Trim failed: \(error?.localizedDescription ?? "unknown")")
+                            }
+                            recordedVideoURL = nil
+                        }
+                    }
+                )
+            }
+        }
         .overlay {
             if isTranscribing {
                 ZStack {
@@ -801,6 +860,22 @@ struct ContentView: View {
                             .scaleEffect(1.5)
                             .tint(.white)
                         Text("Transcribing...")
+                            .foregroundColor(.white)
+                            .font(.headline)
+                    }
+                }
+            }
+        }
+        .overlay {
+            if isProcessingVideo {
+                ZStack {
+                    Color.black.opacity(0.6)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        Text("Exporting...")
                             .foregroundColor(.white)
                             .font(.headline)
                     }
@@ -1130,7 +1205,6 @@ struct ContentView: View {
 
         isTranscribing = true
 
-        // iOS will automatically show permission dialog on first use
         speechManager.transcribe(videoURL: url) { segments, error in
             isTranscribing = false
 

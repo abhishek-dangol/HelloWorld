@@ -57,6 +57,8 @@ class SpeechRecognitionManager {
         var segmentStartTime: TimeInterval = 0
         var segmentEndTime: TimeInterval = 0
 
+        let maxWordsPerSegment = 6
+
         for (index, segment) in transcription.segments.enumerated() {
             if currentWords.isEmpty {
                 segmentStartTime = segment.timestamp
@@ -65,8 +67,7 @@ class SpeechRecognitionManager {
             currentWords.append(segment.substring)
             segmentEndTime = segment.timestamp + segment.duration
 
-            // Create a new caption segment every 5-7 words or at natural pauses
-            let shouldBreak = currentWords.count >= 6 ||
+            let shouldBreak = currentWords.count >= maxWordsPerSegment ||
                 (index < transcription.segments.count - 1 &&
                  transcription.segments[index + 1].timestamp - segmentEndTime > 0.5)
 

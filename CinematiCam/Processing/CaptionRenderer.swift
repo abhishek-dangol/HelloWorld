@@ -107,9 +107,10 @@ class CaptionRenderer {
             textLayer.string = createAttributedString(text: caption.text, videoSize: videoSize)
             textLayer.alignmentMode = .center
             textLayer.contentsScale = UIScreen.main.scale
+            textLayer.isWrapped = true
 
             // Position at bottom center
-            let textHeight: CGFloat = 60
+            let textHeight: CGFloat = 80
             let margin: CGFloat = videoSize.height * 0.1
             textLayer.frame = CGRect(
                 x: 20,
@@ -140,10 +141,13 @@ class CaptionRenderer {
     }
 
     private func createAttributedString(text: String, videoSize: CGSize) -> NSAttributedString {
-        let fontSize: CGFloat = min(videoSize.width, videoSize.height) * 0.045
+        let fontSize: CGFloat = min(videoSize.width, videoSize.height) * 0.05
+
+        // Use system font which supports both Latin and Devanagari
+        let font = UIFont.boldSystemFont(ofSize: fontSize)
 
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.boldSystemFont(ofSize: fontSize),
+            .font: font,
             .foregroundColor: UIColor.white,
             .strokeColor: UIColor.black,
             .strokeWidth: -3.0

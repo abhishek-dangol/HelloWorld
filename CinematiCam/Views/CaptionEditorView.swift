@@ -19,6 +19,30 @@ struct CaptionEditorView: View {
                         player = AVPlayer(url: videoURL)
                     }
 
+                // Language info
+                HStack {
+                    // Language indicator
+                    Label {
+                        Text("English")
+                            .font(.subheadline.weight(.medium))
+                    } icon: {
+                        Image(systemName: "globe")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.15))
+                    .foregroundColor(.blue)
+                    .cornerRadius(16)
+
+                    Spacer()
+
+                    Text("\(captions.count) captions")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+
                 // Caption list
                 List {
                     ForEach($captions) { $caption in
