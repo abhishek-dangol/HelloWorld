@@ -420,6 +420,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "CinematiCam needs camera access to record videos.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "CinematiCam needs microphone access to record audio with your videos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "CinematiCam needs access to save videos to your photo library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "CinematiCam shows your photos and videos when you tap All Photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -477,6 +478,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "CinematiCam needs camera access to record videos.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "CinematiCam needs microphone access to record audio with your videos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "CinematiCam needs access to save videos to your photo library.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "CinematiCam shows your photos and videos when you tap All Photos.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

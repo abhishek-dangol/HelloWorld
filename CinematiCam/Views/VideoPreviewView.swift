@@ -16,6 +16,7 @@ struct VideoPreviewView: View {
     let onSave: () -> Void
 
     @StateObject private var playerManager = LoopingPlayerManager()
+    @State private var showDiscardConfirm = false
 
     var body: some View {
         ZStack {
@@ -28,8 +29,9 @@ struct VideoPreviewView: View {
         }
         // Discard button (top-left)
         .overlay(alignment: .topLeading) {
+            // Ask first: the video isn't saved yet, and X would delete it (Instagram-style)
             Button {
-                onDiscard()
+                showDiscardConfirm = true
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 20, weight: .bold))
@@ -79,6 +81,12 @@ struct VideoPreviewView: View {
                 }
             }
             .padding(.bottom, 50)
+        }
+        .alert("Discard this video?", isPresented: $showDiscardConfirm) {
+            Button("Discard", role: .destructive) { onDiscard() }
+            Button("Keep", role: .cancel) { }
+        } message: {
+            Text("It hasn't been saved to Photos yet. Tap Save to keep it.")
         }
         .onAppear {
             playerManager.play(url: videoURL)

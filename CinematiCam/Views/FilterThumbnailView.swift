@@ -12,7 +12,9 @@ struct FilterThumbnailView: View {
         // Load sample image from assets
         if let uiImage = UIImage(named: "FilterSample"),
            let cgImage = uiImage.cgImage {
-            return CIImage(cgImage: cgImage)
+            // Thumbnails are drawn about 112 points wide, so 340 pixels is plenty
+            let scale = 340 / CGFloat(cgImage.width)
+            return CIImage(cgImage: cgImage).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }
         // Fallback to gradient if image not found
         let gradient = CIFilter.linearGradient()
@@ -26,28 +28,39 @@ struct FilterThumbnailView: View {
     var body: some View {
         VStack(spacing: 4) {
             filteredImage
-                .frame(width: 50, height: 50)
-                .clipShape(Circle())
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
-                    Circle()
+                    RoundedRectangle(cornerRadius: 12)
                         .stroke(isSelected ? Color.yellow : Color.clear, lineWidth: 3)
                 )
 
             Text(filter.name)
-                .font(.system(size: 10))
+                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                 .foregroundColor(isSelected ? .yellow : .white)
         }
     }
 
+    /// Each filter's thumbnail is drawn once and kept, so the row stays smooth with many filters.
+    private static var thumbnails: [String: UIImage] = [:]
+
+    private static func thumbnail(for filter: Filter) -> UIImage? {
+        if let saved = thumbnails[filter.name] { return saved }
+        let filtered = filter.apply(to: sampleImage)
+        guard let cgImage = ciContext.createCGImage(filtered, from: filtered.extent) else { return nil }
+        let image = UIImage(cgImage: cgImage)
+        thumbnails[filter.name] = image
+        return image
+    }
+
     private var filteredImage: some View {
-        let filtered = filter.apply(to: Self.sampleImage)
-        if let cgImage = Self.ciContext.createCGImage(filtered, from: filtered.extent) {
+        if let thumbnail = Self.thumbnail(for: filter) {
             return AnyView(
-                Image(uiImage: UIImage(cgImage: cgImage))
+                Image(uiImage: thumbnail)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 80, height: 80)
-                    .offset(y: 10)
+                    .frame(width: 112, height: 112)
+                    .offset(y: 14)
             )
         }
         return AnyView(

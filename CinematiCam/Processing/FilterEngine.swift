@@ -10,7 +10,13 @@ class FilterEngine {
     }
 
     func applyFilter(to image: CIImage) -> CIImage {
-        guard let filter = selectedFilter else {
+        applyFilter(selectedFilter, intensity: intensity, to: image)
+    }
+
+    /// The same with the filter and its strength given by the caller (a photo keeps the
+    /// ones from the shutter press)
+    func applyFilter(_ filter: Filter?, intensity: Double, to image: CIImage) -> CIImage {
+        guard let filter = filter else {
             return image
         }
 
