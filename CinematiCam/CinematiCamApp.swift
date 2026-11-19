@@ -9,9 +9,20 @@ import SwiftUI
 
 @main
 struct CinematiCamApp: App {
+    init() {
+        Diagnostics.logStart()
+    }
+
+    /// The welcome screens show once; the camera (and its access questions) comes after them
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if hasSeenWelcome {
+                ContentView()
+            } else {
+                WelcomeView { hasSeenWelcome = true }
+            }
         }
     }
 }

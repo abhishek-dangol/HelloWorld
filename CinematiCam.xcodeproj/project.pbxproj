@@ -38,6 +38,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				LaunchScreenInfo.plist,
 			);
 			target = 0178594A2F26A76900262D2F /* CinematiCam */;
 		};
@@ -416,7 +417,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "";
+				INFOPLIST_FILE = CinematiCam/LaunchScreenInfo.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CinematiCam needs camera access to record videos.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "CinematiCam needs microphone access to record audio with your videos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "CinematiCam needs access to save videos to your photo library.";
@@ -474,7 +475,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "";
+				INFOPLIST_FILE = CinematiCam/LaunchScreenInfo.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CinematiCam needs camera access to record videos.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "CinematiCam needs microphone access to record audio with your videos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "CinematiCam needs access to save videos to your photo library.";

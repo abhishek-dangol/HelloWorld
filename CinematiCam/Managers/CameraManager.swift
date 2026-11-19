@@ -156,9 +156,17 @@ class CameraManager: NSObject, ObservableObject {
     /// How bright the live picture is in the Photo tab, noted a few times a second, and
     /// what it was when the shutter was pressed (see matchedToScreen)
     private let liveLevelsLock = NSLock()
-    private var liveLevels: (levels: [Float], at: CFTimeInterval, steady: Bool)?
+    private var liveLevels: (reading: ScreenMatch.Reading, at: CFTimeInterval, steady: Bool)?
+private struct PairShutter { // PAIRTEST
+    var live: CGImage?, shown: CGImage?, steady: Bool, age: Double, matched: Bool, levels: [Float] // PAIRTEST
+    var iso: Double, seconds: Double, bias: Double, offset: Double // PAIRTEST
+} // PAIRTEST
+private var pairLive: CGImage? // PAIRTEST
+private var pairShutter: PairShutter? // PAIRTEST
     private var photoStartedAt: CFTimeInterval?
-    private var shutterLiveLevels: [Float]?
+    private var shutterLiveLevels: ScreenMatch.Reading?
+    /// When the iPhone was asked for the photo being taken (for the diagnostics log)
+    private var photoAskedAt: CFTimeInterval = 0
     /// True while the Photo tab is showing. The background blur (Cinematic) is switched off
     /// then, because with it on the camera only delivers photos of about 3 megapixels.
     private(set) var photoModeActive = false
@@ -231,8 +239,6 @@ class CameraManager: NSObject, ObservableObject {
     var retouchAmount: Float = 0.5         // Smoothing intensity (0.0 - 1.0)
     /// The Mist slider, 0 (off) to 1. See `applyMist`.
     var mistAmount: Float = 0
-    /// How strong the glow is with the slider at the top ("strong" on the sample sheet)
-    static let mistFullStrength = 1.3
     var retouchRadius: Float = 9.0         // Blur radius (1.0 - 15.0)
     var skinBrightness: Float = 0.0        // Skin glow effect (-0.1 - 0.2)
     var skinWarmth: Float = 0.0            // Warm/cool skin tone (-0.3 - 0.3)
@@ -1591,14 +1597,64 @@ class CameraManager: NSObject, ObservableObject {
         // is still finding its brightness (just opened, just flipped, just moved to a new
         // view) a reading is far off, and matching to it gave a much too dark photo
         liveLevelsLock.lock()
-        shutterLiveLevels = liveLevels.flatMap { $0.steady && CACurrentMediaTime() - $0.at < 1.2 ? $0.levels : nil }
+        shutterLiveLevels = liveLevels.flatMap { $0.steady && CACurrentMediaTime() - $0.at < 1.2 ? $0.reading : nil }
         photoStartedAt = CACurrentMediaTime()
+        pairShutter = PairShutter(live: pairLive, shown: filteredPreview?.cgImage, steady: liveLevels?.steady ?? false, // PAIRTEST
+                                  age: liveLevels.map { CACurrentMediaTime() - $0.at } ?? -1, // PAIRTEST
+                                  matched: shutterLiveLevels != nil, levels: liveLevels?.reading.levels ?? [], // PAIRTEST
+                                  iso: Double(device.iso), seconds: device.exposureDuration.seconds, // PAIRTEST
+                                  bias: Double(device.exposureTargetBias), offset: Double(device.exposureTargetOffset)) // PAIRTEST
         liveLevelsLock.unlock()
         shutterLook = ShutterLook(isFront: currentPosition == .front, zoom: digitalZoom,
                                   focusPoint: photoFocusPoint, aperture: chosenAperture,
                                   filter: filterEngine.selectedFilter, filterIntensity: filterEngine.intensity,
                                   mist: mistAmount)
+        logPhotoAsk(settings: settings, device: device)
         photoOutput.capturePhoto(with: settings, delegate: self)
+    }
+
+    /// Diagnostics: everything about a shot that could explain a blurred or mismatched photo
+    private func logPhotoAsk(settings: AVCapturePhotoSettings, device: AVCaptureDevice) {
+        guard Diagnostics.isOn else { return }
+        photoAskedAt = CACurrentMediaTime()
+        func yesNo(_ value: Bool) -> String { value ? "yes" : "no" }
+        var moment = "not available on this iOS"
+        if #available(iOS 17.0, *) {
+            moment = "photo from the moment of the press (zero shutter lag): supported \(yesNo(photoOutput.isZeroShutterLagSupported)), on \(yesNo(photoOutput.isZeroShutterLagEnabled))"
+                + "; overlapping shots (responsive capture): supported \(yesNo(photoOutput.isResponsiveCaptureSupported)), on \(yesNo(photoOutput.isResponsiveCaptureEnabled))"
+                + "; fast-shot mode: supported \(yesNo(photoOutput.isFastCapturePrioritizationSupported)), on \(yesNo(photoOutput.isFastCapturePrioritizationEnabled))"
+        }
+        let quality = ["speed", "balanced", "best quality"][max(0, min(2, settings.photoQualityPrioritization.rawValue - 1))]
+        let exposure = [AVCaptureDevice.ExposureMode.locked: "locked", .autoExpose: "auto once",
+                        .continuousAutoExposure: "auto", .custom: "manual"][device.exposureMode] ?? "?"
+        let format = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        liveLevelsLock.lock()
+        let reading = liveLevels
+        let used = shutterLiveLevels != nil
+        liveLevelsLock.unlock()
+        let match: String
+        if let reading {
+            let age = String(format: "%.2f", CACurrentMediaTime() - reading.at)
+            match = used ? "used (reading \(age) s old)"
+                : "skipped (reading \(age) s old, \(reading.steady ? "steady" : "picture was still changing"))"
+        } else {
+            match = "skipped (no reading)"
+        }
+        Diagnostics.log("Photo", "Asked the iPhone: \(currentPosition == .front ? "selfie" : "back") camera \(device.localizedName), "
+            + "photo \(settings.maxPhotoDimensions.width)x\(settings.maxPhotoDimensions.height), mode \(quality), "
+            + "depth \(yesNo(settings.isDepthDataDeliveryEnabled)), live picture \(format.width)x\(format.height)")
+        Diagnostics.log("Photo", "Camera at the press: shutter 1/\(Int((1 / max(device.exposureDuration.seconds, 0.0001)).rounded())) s, "
+            + "ISO \(Int(device.iso)), brightness \(exposure), still settling brightness \(yesNo(device.isAdjustingExposure)), "
+            + "still focusing \(yesNo(device.isAdjustingFocus)), zoom \(String(format: "%.2f", Double(digitalZoom)))")
+        Diagnostics.log("Photo", "iPhone features: \(moment)")
+        Diagnostics.log("Photo", "Match to screen: \(match). Filter \(filterEngine.selectedFilter?.name ?? "none"), "
+            + "mist \(String(format: "%.2f", Double(mistAmount))), background blur \(yesNo(portraitOn)), skin smoothing \(yesNo(retouchEnabled))")
+    }
+
+    /// Diagnostics: a step of the shot, with the time since the iPhone was asked for it
+    private func logPhotoStep(_ text: String) {
+        guard Diagnostics.isOn else { return }
+        Diagnostics.log("Photo", "+\(Int(((CACurrentMediaTime() - photoAskedAt) * 1000).rounded())) ms: \(text)")
     }
 
     func setFilter(_ filter: Filter) {
@@ -1954,56 +2010,11 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         return applyMist(to: filterEngine.applyFilter(to: ciImage))
     }
 
-    /// The Mist slider: the look of a mist (diffusion) filter on the lens. Bright areas spill
-    /// a soft glow over their surroundings and the darks lift a touch; detail stays sharp
-    /// because the glow is laid over the picture, the picture itself is never blurred.
-    /// Sizes follow the picture's width, so video frames and big photos look the same.
+    /// The Mist slider: the look of a mist (diffusion) glass on the lens. See `MistEffect`.
     private func applyMist(to image: CIImage, amount: Float? = nil) -> CIImage {
-        let strength = Double(amount ?? mistAmount) * Self.mistFullStrength
-        let extent = image.extent
-        // Slow motion has a third of the time per frame: the glow is left out there
-        guard strength > 0.005, !slowMoRunning, !extent.isInfinite, extent.width > 0 else { return image }
-        func scaled(_ input: CIImage, by gain: Double, bias: Double = 0) -> CIImage {
-            input.applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: gain, y: 0, z: 0, w: 0),
-                "inputGVector": CIVector(x: 0, y: gain, z: 0, w: 0),
-                "inputBVector": CIVector(x: 0, y: 0, z: gain, w: 0),
-                "inputBiasVector": CIVector(x: bias, y: bias, z: bias, w: 0)])
-        }
-        let white = CIVector(x: 1, y: 1, z: 1, w: 1)
-        // The glow is worked out on a quarter-size copy of the picture (a sixteenth of the
-        // work). It is soft all over, so nothing is lost; the smooth shrink keeps small
-        // lights from flickering from frame to frame.
-        let small = image.applyingFilter("CILanczosScaleTransform",
-                                         parameters: [kCIInputScaleKey: 0.25, kCIInputAspectRatioKey: 1])
-        // Only what is brighter than the threshold glows
-        let threshold = 0.42
-        let gain = 1 / (1 - threshold)
-        let bright = scaled(small, by: gain, bias: -threshold * gain)
-            .applyingFilter("CIColorClamp", parameters: [
-                "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 1),
-                "inputMaxComponents": white])
-            .clampedToExtent()
-        // `share` = the glow's reach as a share of the picture's width
-        func glow(_ share: Double) -> CIImage {
-            bright.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: extent.width * share / 4])
-                .transformed(by: CGAffineTransform(scaleX: 4, y: 4))
-                .cropped(to: extent)
-        }
-        // Laying a glow over anything brighter than white (HDR video) would dim it, so the
-        // glows go over a copy held at white, and the original wins wherever it is brighter
-        let capped = image.applyingFilter("CIColorClamp", parameters: [
-            "inputMinComponents": CIVector(x: -8, y: -8, z: -8, w: 0),
-            "inputMaxComponents": white])
-        // A tight glow, then a wide one
-        var output = scaled(glow(0.012), by: 0.55 * strength)
-            .applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: capped])
-        output = scaled(glow(0.05), by: 0.75 * strength)
-            .applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: output])
-        let lift = 0.012 * strength
-        return scaled(output, by: 1 - lift, bias: lift)
-            .applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: image])
-            .cropped(to: extent)
+        // Slow motion has a third of the time per frame: the mist is left out there
+        guard !slowMoRunning else { return image }
+        return MistEffect.apply(to: image, amount: Double(amount ?? mistAmount))
     }
 
     /// The Photo tab's blur on a live frame as it arrives from the camera (still sideways).
@@ -2041,17 +2052,19 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             let measureLive = !takingPhoto && now - (liveLevels?.at ?? 0) >= 0.3
             liveLevelsLock.unlock()
             // A black reading is a hiccup, not the scene: the last good one stays
-            if measureLive, let levels = brightnessLevels(of: CIImage(cvPixelBuffer: pixelBuffer)),
-               case let mean = levels.reduce(0, +) / Float(max(levels.count, 1)), mean > 0.01 {
+            if measureLive, let reading = ScreenMatch.reading(of: CIImage(cvPixelBuffer: pixelBuffer), context: ciContext),
+               case let mean = reading.averageLevel, mean > 0.01 {
                 liveLevelsLock.lock()
                 // Settled = about as bright as the reading just before it
                 var steady = false
                 if let last = liveLevels, now - last.at < 0.8 {
-                    let lastMean = last.levels.reduce(0, +) / Float(max(last.levels.count, 1))
+                    let lastMean = last.reading.averageLevel
                     steady = abs(mean - lastMean) <= 0.08 * max(mean, lastMean)
                 }
-                liveLevels = (levels, CACurrentMediaTime(), steady)
+                liveLevels = (reading, CACurrentMediaTime(), steady)
                 liveLevelsLock.unlock()
+                let pairCopyNow = pairCopy(CIImage(cvPixelBuffer: pixelBuffer)) // PAIRTEST
+                liveLevelsLock.lock(); pairLive = pairCopyNow; liveLevelsLock.unlock() // PAIRTEST
             }
         }
 
@@ -2150,11 +2163,34 @@ extension CameraManager: AVCaptureDataOutputSynchronizerDelegate {
 }
 
 extension CameraManager: AVCapturePhotoCaptureDelegate {
+    func photoOutput(_ output: AVCapturePhotoOutput, willBeginCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        let range = resolvedSettings.photoProcessingTimeRange
+        logPhotoStep("iPhone started the shot; it expects \(String(format: "%.2f", range.start.seconds)) to "
+            + "\(String(format: "%.2f", (range.start + range.duration).seconds)) s to develop it, "
+            + "size \(resolvedSettings.photoDimensions.width)x\(resolvedSettings.photoDimensions.height)")
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, willCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        logPhotoStep("shutter moment")
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, didCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        logPhotoStep("light collected (moving the phone after this cannot blur the photo)")
+    }
+
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        if let error = error { print("Photo capture error: \(error.localizedDescription)") }
+        if let error = error {
+            logPhotoStep("the iPhone gave an error: \(error.localizedDescription)")
+        } else {
+            let exif = photo.metadata["{Exif}"] as? [String: Any] ?? [:]
+            let seconds = exif["ExposureTime"] as? Double ?? 0
+            let iso = (exif["ISOSpeedRatings"] as? [Any])?.first.map { "\($0)" } ?? "?"
+            logPhotoStep("photo arrived from the iPhone: shutter \(seconds > 0 ? "1/\(Int((1 / seconds).rounded())) s" : "?"), ISO \(iso)")
+        }
         photoQueue.async { [weak self] in
             guard let self = self else { return }
             let image = error == nil ? self.makeFinishedPhoto(from: photo, look: self.shutterLook) : nil
+            self.logPhotoStep(image == nil ? "no finished photo" : "our own look (match, filter, blur) is on it")
             self.shutterDepth = nil
             // Asked for a big photo at the blur camera and got the standard size: this iPhone
             // does not hand big ones over this way
@@ -2188,7 +2224,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
             DispatchQueue.main.async {
                 guard let self = self, self.pendingPhotoID == shot,
                       let completion = self.pendingPhotoCompletion else { return }
-                print("Photo never arrived\(error.map { ": \($0.localizedDescription)" } ?? "")")
+                self.logPhotoStep("the photo never arrived\(error.map { ": \($0.localizedDescription)" } ?? "")")
                 self.pendingPhotoCompletion = nil
                 self.pendingPhotoID = nil
                 self.shutterDepth = nil
@@ -2202,6 +2238,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         let aperture = look?.aperture ?? chosenAperture
         guard var pixelBuffer = photo.pixelBuffer else { return nil }
         print("Photo captured: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
+        let pairStill = pairCopy(CIImage(cvPixelBuffer: pixelBuffer)) // PAIRTEST
         if retouchEnabled, let smoothed = retouchPhotoBuffer(pixelBuffer) {
             pixelBuffer = smoothed
         }
@@ -2233,8 +2270,60 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         }
         let finished = applyZoomSkinAndFilter(ciImage, scaleZoomBack: false, look: look)
         guard let cgImage = ciContext.createCGImage(finished, from: finished.extent) else { return nil }
+        savePair(still: pairStill, final: cgImage, photo: photo, look: look) // PAIRTEST
         return UIImage(cgImage: cgImage)
     }
+
+    // PAIRTEST-BEGIN
+    private func pairCopy(_ image: CIImage, longSide: CGFloat = 640) -> CGImage? {
+        let scale = longSide / max(image.extent.width, image.extent.height)
+        guard scale.isFinite, scale > 0 else { return nil }
+        let small = image.applyingFilter("CILanczosScaleTransform",
+                                         parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1.0])
+        return ciContext.createCGImage(small, from: small.extent.integral, format: .RGBA8,
+                                       colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+    }
+
+    private func savePair(still: CGImage?, final: CGImage, photo: AVCapturePhoto, look: ShutterLook?) {
+        liveLevelsLock.lock()
+        let shutter = pairShutter
+        pairShutter = nil
+        liveLevelsLock.unlock()
+        let stamp = DateFormatter()
+        stamp.dateFormat = "HHmmss"
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pairs/\(stamp.string(from: Date()))")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func write(_ image: CGImage?, _ name: String, jpeg: Bool = false) {
+            guard let image else { return }
+            let picture = UIImage(cgImage: image)
+            try? (jpeg ? picture.jpegData(compressionQuality: 0.9) : picture.pngData())?
+                .write(to: folder.appendingPathComponent(name))
+        }
+        write(shutter?.live, "live.png")
+        write(still, "still.png")
+        write(shutter?.shown, "shown.jpg", jpeg: true)
+        write(pairCopy(CIImage(cgImage: final), longSide: 1600), "final.jpg", jpeg: true)
+        let exif = photo.metadata["{Exif}"] as? [String: Any] ?? [:]
+        var info: [String: Any] = [
+            "steady": shutter?.steady ?? false, "age": shutter?.age ?? -1, "matched": shutter?.matched ?? false,
+            "levels": (shutter?.levels ?? []).map { Double($0) },
+            "liveISO": shutter?.iso ?? 0, "liveSeconds": shutter?.seconds ?? 0,
+            "liveBias": shutter?.bias ?? 0, "liveOffset": shutter?.offset ?? 0,
+            "front": look?.isFront ?? false, "zoom": Double(look?.zoom ?? 1),
+            "filter": look?.filter?.name ?? "none", "filterIntensity": look?.filterIntensity ?? 0,
+            "mist": Double(look?.mist ?? 0), "portrait": portraitOn, "retouch": retouchEnabled,
+            "finalWidth": final.width, "finalHeight": final.height,
+        ]
+        for key in ["ISOSpeedRatings", "ExposureTime", "BrightnessValue", "ExposureBiasValue", "FNumber"] {
+            if let value = exif[key] { info["exif" + key] = "\(value)" }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: folder.appendingPathComponent("info.json"))
+        }
+        print("PAIRTEST saved \(folder.lastPathComponent)")
+    }
+    // PAIRTEST-END
 
     /// A reading of one camera or view says nothing about the next one
     private func forgetLiveLevels() {
@@ -2244,94 +2333,18 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         liveLevelsLock.unlock()
     }
 
-    /// How light each part of a picture is, as a small grid of values from 0 (black) to 1
-    /// (white) the way a screen shows them, for comparing two pictures of the same view.
-    private func brightnessLevels(of image: CIImage) -> [Float]? {
-        let longSide = max(image.extent.width, image.extent.height)
-        guard longSide > 0, let screenSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        let small = image.applyingFilter("CILanczosScaleTransform",
-                                         parameters: [kCIInputScaleKey: 48 / longSide, kCIInputAspectRatioKey: 1.0])
-        // Inside the edge, where the shrunken picture fades out
-        let bounds = small.extent.insetBy(dx: 2, dy: 2).integral
-        let width = Int(bounds.width), height = Int(bounds.height)
-        guard width > 0, height > 0 else { return nil }
-        var pixels = [Float](repeating: 0, count: width * height * 4)
-        pixels.withUnsafeMutableBytes {
-            ciContext.render(small, toBitmap: $0.baseAddress!, rowBytes: width * 16, bounds: bounds,
-                             format: .RGBAf, colorSpace: screenSpace)
-        }
-        return stride(from: 0, to: pixels.count, by: 4).map {
-            min(max(0.2126 * pixels[$0] + 0.7152 * pixels[$0 + 1] + 0.0722 * pixels[$0 + 2], 0), 1)
-        }
-    }
-
-    /// The curve that turns the photo's spread of dark and light into the live picture's, as
-    /// 64 steps from black to white. Nil when the two already agree.
-    private func toneCurve(from still: [Float], to live: [Float]) -> [Float]? {
-        let stillSorted = still.sorted(), liveSorted = live.sorted()
-        func level(_ sorted: [Float], _ share: Float) -> Float {
-            sorted[min(sorted.count - 1, Int(share * Float(sorted.count - 1) + 0.5))]
-        }
-        // 0.75 stops either way at most, as a screen shows it: enough for the gap between
-        // the live picture and a still, too little to spoil a photo if a reading is off
-        let limit = powf(2, 0.75 / 2.2)
-        // Black stays black and white stays white; in between, the darkest tenth of the photo
-        // becomes as light as the darkest tenth of the live picture, and so on up
-        var points: [(x: Float, y: Float)] = [(0, 0)]
-        for share: Float in [0.02, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98] {
-            let x = level(stillSorted, share)
-            guard x - points[points.count - 1].x >= 0.02, x <= 0.98 else { continue }
-            let y = min(max(level(liveSorted, share), x / limit), min(x * limit, 1))
-            points.append((x, max(y, points[points.count - 1].y)))
-        }
-        points.append((1, 1))
-
-        let steps = 64
-        var curve = [Float](repeating: 0, count: steps)
-        var segment = 0
-        for index in 0..<steps {
-            let x = Float(index) / Float(steps - 1)
-            while segment < points.count - 2, x > points[segment + 1].x { segment += 1 }
-            let from = points[segment], to = points[segment + 1]
-            curve[index] = from.y + (to.y - from.y) * (x - from.x) / (to.x - from.x)
-        }
-        // No step much steeper or flatter than the photo's own, so nothing bands or goes flat
-        let even = 1 / Float(steps - 1)
-        var rises = (1..<steps).map { min(max(curve[$0] - curve[$0 - 1], even / 3), even * 3) }
-        let total = rises.reduce(0, +)
-        if total < 1 { rises = rises.map { $0 / total } }
-        for index in 1..<steps { curve[index] = min(curve[index - 1] + rises[index - 1], 1) }
-        // Round off the corners
-        for _ in 0..<2 {
-            let before = curve
-            for index in 1..<(steps - 1) {
-                curve[index] = (before[index - 1] + 2 * before[index] + before[index + 1]) / 4
-            }
-        }
-        let change = (0..<steps).map { abs(curve[$0] - Float($0) * even) }.max() ?? 0
-        return change >= 0.01 ? curve : nil
-    }
-
-    /// The iPhone develops a still differently from its live picture (deeper shadows, other
-    /// brightness), so a photo came out darker or lighter than what was on screen. This gives
-    /// the still the live picture's dark-to-light spread, as read just before the shutter
-    /// press. At most 0.75 stops either way; with no fresh live reading the photo is left alone.
+    /// The iPhone develops a still differently from its live picture (darker dark areas, less
+    /// colour), so a photo did not look like what was on screen. This gives the still the live
+    /// picture's dark-to-light spread and colour strength, as read just before the shutter
+    /// press (see ScreenMatch). With no fresh live reading the photo is left alone.
     private func matchedToScreen(_ photo: CIImage) -> CIImage {
         liveLevelsLock.lock()
         let live = shutterLiveLevels
         shutterLiveLevels = nil
         photoStartedAt = nil
         liveLevelsLock.unlock()
-        guard let live, !live.isEmpty,
-              let still = brightnessLevels(of: photo), !still.isEmpty,
-              let curve = toneCurve(from: still, to: live),
-              let screenSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return photo }
-        let table = curve.flatMap { [$0, $0, $0] }
-        return photo.applyingFilter("CIColorCurves", parameters: [
-            "inputCurvesData": table.withUnsafeBufferPointer { Data(buffer: $0) },
-            "inputCurvesDomain": CIVector(x: 0, y: 1),
-            "inputColorSpace": screenSpace,
-        ])
+        guard let live else { return photo }
+        return ScreenMatch.matched(photo, to: live, context: ciContext)
     }
 
     /// Skin smoothing for a full-size still. The blur radius is in pixels, so it grows with the

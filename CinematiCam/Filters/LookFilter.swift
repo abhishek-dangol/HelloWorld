@@ -1,4 +1,5 @@
 import CoreImage
+import Foundation
 
 /// A colour look described by a few numbers, so adding a look is one entry in `FilterLibrary`.
 /// Colours use the same scale as the screen: 0 is black, 1 is white.
@@ -47,80 +48,121 @@ struct LookFilter: Filter {
 }
 
 /// Every filter in the row, in the order shown (24 = six full rows of four).
-/// The looks are modelled on the most used Instagram and TikTok filters (named in the
-/// comments), under our own names. The first few use `LookFilter` (simple colour numbers);
-/// the rest use `CurveLook` (tone curves and tints), which can match photo filters more closely.
+/// The looks are modelled on the most used Instagram, VSCO and TikTok filters and on classic
+/// film stocks (named in the comments), under our own names. Crisp uses `LookFilter` (simple
+/// colour numbers); the rest use `GradeLook`, which protects skin and skies.
 enum FilterLibrary {
     static let all: [Filter] = [
         NaturalFilter(),
         // Instagram "Clarendon": brighter, punchier, cool blue in the dark areas
         LookFilter(name: "Crisp", exposure: 0.1, contrast: 1.15, saturation: 1.2,
                    shadows: [0, 0.01, 0.04], highlights: [1, 1, 1.03]),
-        // Instagram "Juno": warm colours pop, deeper darks
-        LookFilter(name: "Glow", contrast: 1.1, saturation: 1.2,
-                   shadows: [0.01, 0, 0], highlights: [1.04, 1, 0.94]),
-        // Instagram "Valencia" / "Rise": golden light, soft darks
-        LookFilter(name: "Golden", exposure: 0.15, contrast: 0.95, saturation: 1.05,
-                   shadows: [0.05, 0.04, 0.02], highlights: [1.03, 0.98, 0.86]),
-        // Instagram "Nashville" / TikTok "Fantasy V11": bright with a pink tint
-        LookFilter(name: "Rosy", exposure: 0.15, contrast: 0.93,
-                   shadows: [0.07, 0.03, 0.07], highlights: [1.03, 0.95, 0.97]),
-        // Instagram "Lark": bright and airy, calmer reds, stronger blues
-        LookFilter(name: "Airy", exposure: 0.25, contrast: 0.97, saturation: 0.9,
-                   shadows: [0.03, 0.04, 0.05], highlights: [0.98, 1, 1.03]),
-        // The matte look: lifted blacks, slightly muted colour, contrast kept
-        CurveLook(name: "Matte", contrast: 0.25, saturation: 0.88,
-                  shadows: [0.09, 0.085, 0.1], highlights: [0.99, 0.98, 0.97]),
-        // Instagram "X-Pro II": high contrast, warm highlights, green-blue darks, dark corners
-        CurveLook(name: "Punch", brightness: 0.08, contrast: 0.55, saturation: 1.3,
-                  shadows: [0, 0.01, 0.03], highlights: [1, 0.97, 0.84], vignette: 0.9),
-        // Instagram "1977": pink-tinted fade with lifted blacks
-        CurveLook(name: "Blush", brightness: 0.1, contrast: -0.1,
-                  shadows: [0.12, 0.05, 0.1], highlights: [1, 0.88, 0.9], midtones: [0.05, 0, 0.05]),
-        // Instagram "Hudson": cool, bright, icy blue shadows
-        CurveLook(name: "Frost", brightness: 0.12, contrast: 0.25, saturation: 0.95,
-                  shadows: [0.02, 0.05, 0.12], highlights: [0.96, 1, 1],
-                  shadowTint: [0, 0.02, 0.06], vignette: 0.4),
-        // Instagram "Amaro": bright, warm centre, lifted shadows
-        CurveLook(name: "Sunny", brightness: 0.25, contrast: 0.15, saturation: 1.15,
-                  shadows: [0.04, 0.03, 0], highlights: [1, 0.97, 0.85], midtones: [0.05, 0.03, -0.03]),
-        // Instagram "Toaster": burnt orange, strong contrast, dark corners
-        CurveLook(name: "Toast", contrast: 0.3, saturation: 1.2,
-                  shadows: [0.12, 0.02, 0], highlights: [1, 0.92, 0.75], vignette: 1),
-        // Kodak Portra-style film: soft contrast, warm skin, slightly green-blue darks
-        CurveLook(name: "Film", brightness: 0.05, contrast: 0.2, saturation: 0.9,
-                  shadows: [0.04, 0.05, 0.06], highlights: [1, 0.97, 0.92],
-                  midtones: [0.06, 0.02, -0.03], shadowTint: [-0.01, 0.03, 0.04],
-                  highlightTint: [0.04, 0.02, -0.03]),
-        // The teal-and-orange movie grade used all over TikTok and Reels
-        CurveLook(name: "Cinema", contrast: 0.35, saturation: 1.05,
-                  shadowTint: [-0.04, 0.03, 0.08], highlightTint: [0.08, 0.02, -0.08]),
-        // Dark, matte, green-teal shadows, dark corners
-        CurveLook(name: "Moody", brightness: -0.2, contrast: 0.45, saturation: 0.8,
-                  shadows: [0, 0.03, 0.03], shadowTint: [-0.02, 0.03, 0.04], vignette: 1),
-        // TikTok-style soft glow: lifted, hazy, pink-tinged bloom
-        CurveLook(name: "Dreamy", brightness: 0.2, contrast: -0.15,
-                  shadows: [0.06, 0.04, 0.07], highlights: [1, 0.97, 1], bloom: 0.6),
-        // Orange-pink golden hour
-        CurveLook(name: "Sunset", contrast: 0.3, saturation: 1.3,
-                  midtones: [0.15, 0, -0.1], shadowTint: [0.05, -0.02, 0.04],
-                  highlightTint: [0.1, 0, -0.1]),
-        // 70s warm photo: faded browns, orange highlights, dark corners
-        CurveLook(name: "Retro", contrast: 0.1, saturation: 0.95,
-                  shadows: [0.14, 0.1, 0.06], highlights: [1, 0.95, 0.82],
-                  midtones: [0.1, 0.03, -0.08], vignette: 0.6),
-        // Instagram "Earlybird": old-photo sepia, dark corners
-        CurveLook(name: "Antique", contrast: 0.2, saturation: 0.5,
-                  shadows: [0.08, 0.05, 0.02], highlights: [1, 0.92, 0.72], vignette: 0.8),
-        CurveLook(name: "Warm", brightness: 0.05, saturation: 1.05,
-                  highlights: [1, 0.97, 0.88], midtones: [0.2, 0.05, -0.2]),
-        CurveLook(name: "Cool", saturation: 1.0,
-                  highlights: [0.9, 0.98, 1], midtones: [-0.2, 0, 0.2]),
-        // Boosted colour and contrast
-        CurveLook(name: "Pop", brightness: 0.05, contrast: 0.35, saturation: 1.5),
-        // Instagram "Inkwell": black and white with strong contrast
-        CurveLook(name: "B&W", brightness: 0.05, contrast: 0.4, mono: true),
-        // Dark dramatic black and white with dark corners
-        CurveLook(name: "Noir", brightness: -0.15, contrast: 0.7, mono: true, vignette: 1.2)
+        // Everything below is graded in OKLab with skin and sky protection (see GradeLook).
+        // Each look has its own job; no two are the same shift at different strengths.
+        // Instagram "Juno": warm colours glow, cool colours calm, clean contrast
+        GradeLook(name: "Glow", contrast: 0.4, vibrance: 0.35, warmth: 0.2,
+                  highlightTint: T(75, 0.02),
+                  bands: [B(60, width: 45, chroma: 1.2), B(140, hueShift: 12, chroma: 0.9), B(250, chroma: 0.9)],
+                  bloom: 0.15),
+        // Golden hour: honey light in the middle and bright tones, skies stay blue
+        GradeLook(name: "Golden", brightness: 0.1, contrast: 0.2, vibrance: 0.2, warmth: 0.6,
+                  midTint: T(70, 0.02), highlightTint: T(80, 0.035),
+                  bands: [B(140, hueShift: -15, chroma: 0.9)], skinProtect: 0.9),
+        // Bright soft pink, faces kept natural
+        GradeLook(name: "Rosy", brightness: 0.12, contrast: 0.15, fade: 0.01, vibrance: 0.25, tint: 0.2,
+                  shadowTint: T(300, 0.02), highlightTint: T(350, 0.025),
+                  bands: [B(140, chroma: 0.75), B(25, chroma: 1.1)], skinProtect: 0.95),
+        // Instagram "Lark": bright and clean, clear blues, calm greens; blacks stay black
+        GradeLook(name: "Airy", brightness: 0.25, contrast: 0.25, blacks: 0.3, softWhites: 0.02, vibrance: 0.25,
+                  bands: [B(250, chroma: 1.2, light: 0.03), B(140, hueShift: 10, chroma: 0.85), B(25, chroma: 0.9)]),
+        // VSCO-style matte: the one look with clearly faded blacks, blue-grey shadows
+        GradeLook(name: "Matte", contrast: 0.25, blacks: 0.25, fade: 0.035, softWhites: 0.03,
+                  warmth: 0.1, shadowTint: T(220, 0.035), highlightTint: T(70, 0.02),
+                  bands: [B(140, hueShift: -10, chroma: 0.9)]),
+        // Deep and vivid: rich saturated colour, deep blue skies, clean whites
+        GradeLook(name: "Punch", brightness: 0.05, contrast: 0.55, saturation: 1.3, vibrance: 0.4,
+                  bands: [B(250, chroma: 1.3, light: -0.03), B(140, chroma: 1.15), B(25, chroma: 1.1)],
+                  skinProtect: 0.75),
+        // Fuji 400H film: cool, fresh greens and cyans, pastel colour
+        GradeLook(name: "Fresh", brightness: 0.15, contrast: 0.15, saturation: 0.9, warmth: -0.2,
+                  tint: -0.08, shadowTint: T(190, 0.03), highlightTint: T(150, 0.012),
+                  bands: [B(140, hueShift: 12, chroma: 1.1), B(250, hueShift: -15, chroma: 0.9), B(25, chroma: 0.85)],
+                  skinProtect: 0.95),
+        // Instagram "Hudson": icy blue, faces kept alive
+        GradeLook(name: "Frost", brightness: 0.12, contrast: 0.4, vibrance: 0.25, warmth: -0.45,
+                  shadowTint: T(240, 0.03), highlightTint: T(210, 0.015),
+                  bands: [B(25, chroma: 0.8), B(140, hueShift: 10, chroma: 1.1), B(250, chroma: 1.15)],
+                  skinProtect: 0.95, vignette: 0.2),
+        // CineStill 800T night film: cool blue-teal, red-orange highlights with a glow
+        GradeLook(name: "Neon", contrast: 0.4, saturation: 1.25, vibrance: 0.3, warmth: -0.35, tint: 0.2,
+                  shadowTint: T(205, 0.035), highlightTint: T(345, 0.065),
+                  bands: [B(25, chroma: 1.4), B(340, chroma: 1.4), B(250, hueShift: -8, chroma: 1.1),
+                          B(140, hueShift: 20, chroma: 0.9)],
+                  skinProtect: 0.85, bloom: 0.3, halation: 0.5),
+        // Consumer colour film (Kodak Gold style): warm, rich reds and yellows
+        GradeLook(name: "Summer", brightness: 0.05, contrast: 0.3, saturation: 1.15, vibrance: 0.35, warmth: 0.15,
+                  highlightTint: T(85, 0.02),
+                  bands: [B(25, chroma: 1.2), B(100, chroma: 1.25), B(140, chroma: 1.1),
+                          B(250, hueShift: -10, chroma: 1.1)], skinProtect: 0.9),
+        // Kodak Portra film: gentle contrast, warm skin, green-cyan shadows, fine grain
+        GradeLook(name: "Film", contrast: 0.2, blacks: 0.25, fade: 0.015, softWhites: 0.03, vibrance: 0.15,
+                  warmth: 0.25, shadowTint: T(185, 0.035), highlightTint: T(65, 0.035),
+                  bands: [B(140, hueShift: 12, chroma: 0.85), B(250, hueShift: -12, chroma: 0.85), B(55, chroma: 1.08)],
+                  skinProtect: 0.3, grain: 0.02),
+        // The teal-and-orange movie grade, with faces kept natural
+        GradeLook(name: "Cinema", contrast: 0.35, blacks: 0.25,
+                  shadowTint: T(205, 0.06), highlightTint: T(65, 0.035),
+                  bands: [B(140, hueShift: 40, chroma: 0.75), B(250, hueShift: -30, chroma: 0.95), B(55, chroma: 1.15)],
+                  skinProtect: 0.85),
+        // Dark and rich: deep shadows, deep blue skies, teal greens, warm faces
+        GradeLook(name: "Moody", brightness: -0.1, contrast: 0.5, blacks: 0.25, vibrance: 0.3,
+                  shadowTint: T(200, 0.03), highlightTint: T(60, 0.02),
+                  bands: [B(140, hueShift: 25, chroma: 0.8, light: -0.05), B(250, light: -0.06), B(55, chroma: 1.15)],
+                  skinProtect: 0.9, vignette: 0.5),
+        // Soft glow: lifted, hazy, pink-lilac light
+        GradeLook(name: "Dreamy", brightness: 0.25, contrast: -0.05, fade: 0.02, softWhites: 0.03,
+                  tint: 0.25, shadowTint: T(290, 0.025), highlightTint: T(350, 0.03), bloom: 0.45),
+        // Dusk: orange light, violet shadows and skies
+        GradeLook(name: "Sunset", contrast: 0.25, vibrance: 0.3, warmth: 0.7, tint: 0.25,
+                  shadowTint: T(300, 0.015), highlightTint: T(50, 0.055),
+                  bands: [B(250, hueShift: 15, chroma: 0.9)], skinProtect: 0.8),
+        // 70s colour print: faded, warm, olive greens, plum shadows, strong reds
+        GradeLook(name: "Retro", contrast: 0.2, blacks: 0.25, fade: 0.03, vibrance: 0.2, warmth: 0.25,
+                  shadowTint: T(330, 0.025), midTint: T(60, 0.015), highlightTint: T(90, 0.02),
+                  bands: [B(140, hueShift: -25, chroma: 0.85), B(250, hueShift: -25, chroma: 0.95), B(25, chroma: 1.15)],
+                  skinProtect: 0.85, vignette: 0.4),
+        // Old sepia print
+        GradeLook(name: "Antique", contrast: 0.45, blacks: 0.3, softWhites: 0.03, saturation: 0.5,
+                  shadowTint: T(45, 0.025), midTint: T(65, 0.05), highlightTint: T(80, 0.04),
+                  skinProtect: 0.5, grain: 0.015, vignette: 0.6),
+        GradeLook(name: "Warm", contrast: 0.1, warmth: 0.6, tint: 0.08),
+        // Clean cool daylight: blue-grey shadows, crisp whites, faces kept warm
+        GradeLook(name: "Cool", brightness: 0.05, contrast: 0.25, warmth: -0.9, tint: -0.05,
+                  shadowTint: T(230, 0.03), highlightTint: T(205, 0.012),
+                  bands: [B(250, chroma: 1.1), B(55, chroma: 0.9)], skinProtect: 0.95),
+        // Bright and colourful: light, airy colour that jumps
+        GradeLook(name: "Pop", brightness: 0.3, contrast: 0.1, saturation: 1.25, vibrance: 0.5, tint: 0.12,
+                  highlightTint: T(350, 0.015),
+                  bands: [B(250, hueShift: -15, chroma: 1.2, light: 0.03), B(140, hueShift: -15, chroma: 1.2),
+                          B(25, hueShift: -8, chroma: 1.15)], skinProtect: 0.9),
+        // Black and white, skies a little deeper than the eye sees them
+        GradeLook(name: "B&W", contrast: 0.45, blacks: 0.3, fade: 0.02, mono: [0.5, 0.45, 0.05]),
+        // Dark dramatic black and white: red-filter skies, dark corners
+        GradeLook(name: "Noir", contrast: 0.9, blacks: 0.5, mono: [0.6, 0.35, 0.05],
+                  grain: 0.01, vignette: 1)
     ]
+
+    /// Builds every graded look's lookup table in the background, so opening the filter row
+    /// never stalls the camera screen
+    static func prepareInBackground() {
+        DispatchQueue.global(qos: .utility).async {
+            for case let look as GradeLook in all { look.prepare() }
+        }
+    }
+
+    private static func T(_ hue: Double, _ amount: Double) -> GradeLook.Tint { .init(hue: hue, amount: amount) }
+    private static func B(_ hue: Double, width: Double = 30, hueShift: Double = 0, chroma: Double = 1,
+                          light: Double = 0) -> GradeLook.Band {
+        .init(hue: hue, width: width, hueShift: hueShift, chroma: chroma, light: light)
+    }
 }

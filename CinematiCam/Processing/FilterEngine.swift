@@ -31,7 +31,12 @@ class FilterEngine {
             return filteredImage
         }
 
-        blendFilter.setValue(image, forKey: kCIInputImageKey)
+        // A black-and-white look stays black and white at any strength: the strength slider
+        // then moves between plain grey and the full look, never back toward colour
+        let start = (filter as? GradeLook)?.mono != nil
+            ? image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0])
+            : image
+        blendFilter.setValue(start, forKey: kCIInputImageKey)
         blendFilter.setValue(filteredImage, forKey: kCIInputTargetImageKey)
         blendFilter.setValue(intensity, forKey: kCIInputTimeKey)
 

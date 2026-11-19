@@ -357,6 +357,7 @@ struct ContentView: View {
             cameraManager.setPhotoMode(photoTab, slowMo: isSlowMo)
         }
         .onAppear {
+            FilterLibrary.prepareInBackground()
             lookForInterruptedRecording()
             permissionsManager.requestCameraPermission { granted in
                 if granted {
@@ -375,6 +376,14 @@ struct ContentView: View {
                     // Apply default skin smoothing
                     cameraManager.setRetouch(true)
                     updateCameraRetouchParams()
+                    // Third first-launch question, right after the microphone one (the welcome page
+                    // promises camera, microphone and Photos), instead of at the first save.
+                    // Asking for the microphone again only waits for that answer; it shows no second popup.
+                    AVCaptureDevice.requestAccess(for: .audio) { _ in
+                        DispatchQueue.main.async {
+                            permissionsManager.requestPhotoLibraryPermission { _ in }
+                        }
+                    }
                 } else {
                     showPermissionDeniedAlert = true
                 }
@@ -523,6 +532,13 @@ struct ContentView: View {
                     Section("Guides") {
                         Toggle("Rule of Thirds Grid", isOn: $showGrid)
                         Toggle("Level", isOn: $showLevel)
+                    }
+                    if Diagnostics.isOn {
+                        Section {
+                            NavigationLink("Diagnostics") { DiagnosticsView() }
+                        } footer: {
+                            Text("A log of what the app did, for our own testing. It is taken out before the app is released.")
+                        }
                     }
                 }
                 .navigationTitle("Settings")
@@ -771,19 +787,30 @@ struct ContentView: View {
 
     // MARK: - Camera-app style controls
 
-    private func glassButton(_ icon: String, size: CGFloat = 40, isActive: Bool = false,
+    private func glassButton(_ icon: String, size: CGFloat = 40, isActive: Bool = false, name: String? = nil,
                              action: @escaping () -> Void) -> some View {
         Button {
             HapticFeedback.impact()
             action()
         } label: {
-            Image(systemName: icon)
-                .font(.system(size: size * 0.42, weight: .medium))
-                .foregroundColor(isActive ? .yellow : .white)
-                .frame(width: size, height: size)
-                .background(.ultraThinMaterial, in: Circle())
-                .environment(\.colorScheme, .dark)
-                .turnsWithPhone()
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: size * 0.42, weight: .medium))
+                    .foregroundColor(isActive ? .yellow : .white)
+                    .frame(width: size, height: size)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .environment(\.colorScheme, .dark)
+                    .turnsWithPhone()
+                // The button's name, small, under it (top bar only)
+                if let name {
+                    Text(name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .shadow(color: .black.opacity(0.6), radius: 2)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
         }
     }
 
@@ -810,7 +837,7 @@ struct ContentView: View {
     /// Portrait: shows or hides the blur strength slider, in Photo and Video. The blur
     /// itself is always on. Dimmed while a zoom level has moved to a lens that has no blur.
     private var portraitButton: some View {
-        glassButton("person.and.background.dotted", isActive: showFocusSlider) {
+        glassButton("person.and.background.dotted", isActive: showFocusSlider, name: "Blur") {
             showPanel(blur: true)
         }
         .opacity(cameraManager.isBlurOffForZoom ? 0.35 : 1)
@@ -821,7 +848,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             // Flash exists only on the back camera
             if isBackCamera {
-                glassButton(isFlashOn ? "bolt.fill" : "bolt.slash.fill", isActive: isFlashOn) {
+                glassButton(isFlashOn ? "bolt.fill" : "bolt.slash.fill", isActive: isFlashOn, name: "Flash") {
                     isFlashOn = cameraManager.toggleFlash()
                 }
                 Spacer()
@@ -830,15 +857,15 @@ struct ContentView: View {
                 portraitButton
                 Spacer()
             }
-            glassButton("text.justify.leading", isActive: teleprompterEnabled) {
+            glassButton("text.justify.leading", isActive: teleprompterEnabled, name: "Script") {
                 showTeleprompterSheet = true
             }
             Spacer()
-            glassButton("wand.and.stars", isActive: showRetouchControls) { showPanel(retouch: true) }
+            glassButton("wand.and.stars", isActive: showRetouchControls, name: "Touch up") { showPanel(retouch: true) }
             Spacer()
-            glassButton("camera.filters", isActive: showFilters) { showPanel(filters: true) }
+            glassButton("camera.filters", isActive: showFilters, name: "Looks") { showPanel(filters: true) }
             Spacer()
-            glassButton("gearshape.fill") { showSettings = true }
+            glassButton("gearshape.fill", name: "Settings") { showSettings = true }
         }
         .padding(.horizontal, 20)
         .opacity(countdownValue > 0 ? 0 : 1)
@@ -1532,6 +1559,7 @@ struct ContentView: View {
         // A press while the last photo is still being made is ignored (big photos take ~2 s),
         // and so is one while the camera is being changed: no real photo can be taken then
         guard isPhotoMode, !cameraManager.isTakingPhoto, !cameraManager.isCameraChanging else { return }
+        Diagnostics.log("Photo", "Shutter pressed")
         HapticFeedback.impact()
         let thumbnailBefore = thumbnailPhoto
         let savedIDBefore = lastSavedPhotoID
@@ -1581,6 +1609,7 @@ struct ContentView: View {
                     thumbnailPhoto = thumbnailBefore
                     lastSavedPhotoID = savedIDBefore
                 }
+                Diagnostics.log("Photo", "No photo came; told the user nothing was saved")
                 captureProblem = "The photo could not be taken, so nothing was saved. Please take it again."
                 return
             }
@@ -1767,11 +1796,11 @@ struct ContentView: View {
                 } completionHandler: { success, error in
                     DispatchQueue.main.async {
                         if success {
-                            print("Photo saved to Photos!")
+                            Diagnostics.log("Photo", "Saved to Photos")
                             lastSavedPhotoID = savedID
                             if unsavedPhoto === image { unsavedPhoto = nil }
                         } else {
-                            print("Error saving photo: \(error?.localizedDescription ?? "unknown")")
+                            Diagnostics.log("Photo", "Could not save to Photos: \(error?.localizedDescription ?? "unknown")")
                             photoNotSaved(image)
                         }
                     }
