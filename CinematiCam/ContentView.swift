@@ -105,6 +105,7 @@ struct ContentView: View {
     @State private var showPhotoPreview = false
 
     @State private var showFilters = false
+    @StateObject private var lookTiles = LookTileRenderer()
     @State private var showBlurSlider = false
     @State private var focusIndicatorID = 0
     /// Where a tap that was not on a face landed: it gets the yellow square (nil = hidden)
@@ -167,11 +168,11 @@ struct ContentView: View {
 
     // Inline retouch controls
     @State private var selectedRetouchParam = 1 // default to Smooth selected
-    @State private var retouchAmount: Float = 0.5
+    @State private var retouchAmount: Float = 0.6
     /// The wand panel's Mist slider: glow around bright areas, 0 = off
     @State private var mistAmount: Float = 0
     @State private var retouchRadius: Float = 10.0
-    @State private var savedRetouchAmount: Float = 0.5
+    @State private var savedRetouchAmount: Float = 0.6
     @State private var savedRetouchRadius: Float = 10.0
     @State private var showUndoAlert = false
     @State private var showDiscardAlert = false
@@ -351,6 +352,15 @@ struct ContentView: View {
                 }
             }
             .padding(.bottom, showFilters && !isRecording ? 0 : 8)
+        }
+        // Looks tiles show the live camera picture, made only while the panel is open
+        .onChange(of: showFilters) { open in
+            cameraManager.wantsLookTiles = open
+            if !open { lookTiles.clear() }
+        }
+        .onReceive(cameraManager.$lookTileSource) { source in
+            guard showFilters, let source else { return }
+            lookTiles.update(source: source, filters: filters)
         }
         .onChange(of: isPhotoMode) { photoTab in
             // Photo tab: full-size photos (no background blur). Video tab: Cinematic blur.
@@ -977,7 +987,8 @@ struct ContentView: View {
                         } label: {
                             FilterThumbnailView(
                                 filter: filters[index],
-                                isSelected: selectedFilterName == filters[index].name
+                                isSelected: selectedFilterName == filters[index].name,
+                                liveImage: lookTiles.images[filters[index].name]
                             )
                         }
                     }

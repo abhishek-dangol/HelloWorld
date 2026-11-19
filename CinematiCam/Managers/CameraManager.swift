@@ -22,6 +22,11 @@ class CameraManager: NSObject, ObservableObject {
 
     @Published var depthImage: UIImage?
     @Published var filteredPreview: UIImage?
+    /// A small square copy of the live picture (before the look), for the Looks tiles.
+    /// Only made while the Looks panel is open (`wantsLookTiles`), about 10 times a second.
+    @Published private(set) var lookTileSource: CGImage?
+    var wantsLookTiles = false
+    private var lastLookTileTime: CFTimeInterval = 0
     var blurIntensity: Double = 0.5 // 0 = min blur (f/8), 1 = max blur (f/1.4)
     /// Cinematic f-stop range for the active camera; nil when Cinematic Video isn't active
     @Published var apertureRange: ClosedRange<Float>?
@@ -30,9 +35,9 @@ class CameraManager: NSObject, ObservableObject {
     /// Background blur, in Photo and Video alike.
     /// Always on since 2026-11-15: the Portrait button only shows or hides the strength slider
     private let portraitOn = true
-    /// The blur strength Portrait starts with until the user picks their own (the Camera
-    /// app's Portrait default)
-    static let portraitAperture: Float = 4.5
+    /// The blur strength Portrait starts with until the user picks their own: f/16, the
+    /// weakest blur (user, 2026-11-19)
+    static let portraitAperture: Float = 16
     /// Zoom as shown on screen, like the Camera app: 1.0 = main lens, 0.5 = ultra-wide.
     @Published var displayZoom: CGFloat = 1.0
     /// The zoom buttons to show, like the Camera app's ".5  1x  2" row.
@@ -165,6 +170,9 @@ private var pairLive: CGImage? // PAIRTEST
 private var pairShutter: PairShutter? // PAIRTEST
     private var photoStartedAt: CFTimeInterval?
     private var shutterLiveLevels: ScreenMatch.Reading?
+    /// The picture on screen at the shutter press: the finished photo takes its brightness and
+    /// colour from it (ScreenTransfer). Guarded by liveLevelsLock.
+    private var shutterScreen: CGImage?
     /// When the iPhone was asked for the photo being taken (for the diagnostics log)
     private var photoAskedAt: CFTimeInterval = 0
     /// True while the Photo tab is showing. The background blur (Cinematic) is switched off
@@ -208,6 +216,14 @@ private var pairShutter: PairShutter? // PAIRTEST
     private(set) var usesSeparatePreviewStream = false
     private var hasLoggedPreviewStabilization = false
     private var isObservingSessionErrors = false
+    /// When the last camera frame arrived (any queue; only read by the stall check)
+    private var lastFrameTime: CFTimeInterval = 0
+    /// Last time the camera was restarted by the stall check or an error
+    private var lastCameraRestart: CFTimeInterval = 0
+    /// True after the microphone was taken out because another device (a car's Bluetooth,
+    /// a call) took it; it goes back in when that ends or the app comes back
+    private var micRemovedForOtherDevice = false
+    private var stallTimer: Timer?
     private var currentVideoSize = CGSize(width: 1080, height: 1920)
     private var retouchEnabled = false
 
@@ -236,7 +252,7 @@ private var pairShutter: PairShutter? // PAIRTEST
     private let faceDetectionQueue = DispatchQueue(label: "faceDetectionQueue", qos: .userInitiated)
 
     // Adjustable retouch parameters
-    var retouchAmount: Float = 0.5         // Smoothing intensity (0.0 - 1.0)
+    var retouchAmount: Float = 0.6         // Smoothing intensity (0.0 - 1.0)
     /// The Mist slider, 0 (off) to 1. See `applyMist`.
     var mistAmount: Float = 0
     var retouchRadius: Float = 9.0         // Blur radius (1.0 - 15.0)
@@ -1157,16 +1173,102 @@ private var pairShutter: PairShutter? // PAIRTEST
     func startSession() {
         if !isObservingSessionErrors {
             isObservingSessionErrors = true
-            NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
-                                                   object: captureSession, queue: nil) { notification in
-                let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
-                print("Capture session runtime error: \(error.map { "\($0.code) \($0.localizedDescription) \($0.userInfo)" } ?? "unknown")")
-            }
+            watchForCameraStops()
         }
         Self.sessionSetupQueue.async { [weak self] in
-            self?.captureSession.startRunning()
-            print("Capture session running: \(self?.captureSession.isRunning ?? false)")
+            guard let self else { return }
+            if self.micRemovedForOtherDevice { self.putMicBack() }
+            self.lastFrameTime = CACurrentMediaTime()
+            self.captureSession.startRunning()
+            print("Capture session running: \(self.captureSession.isRunning)")
         }
+    }
+
+    /// iOS can stop the camera while the app is open: a car's Bluetooth or a call taking the
+    /// microphone, or the media system restarting. Without this the picture stayed frozen
+    /// (user, in the car, 2026-11-19). Each case gets the camera running again.
+    private func watchForCameraStops() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: AVCaptureSession.runtimeErrorNotification,
+                           object: captureSession, queue: nil) { [weak self] notification in
+            let error = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            print("Capture session runtime error: \(error.map { "\($0.code) \($0.localizedDescription) \($0.userInfo)" } ?? "unknown")")
+            // A second error soon after a restart: the microphone is the likely trouble, so
+            // carry on without it rather than freeze
+            let dropMic = CACurrentMediaTime() - (self?.lastCameraRestart ?? 0) < 5
+            self?.restartCamera(after: 0.5, withoutMic: dropMic, reason: "error")
+        }
+        center.addObserver(forName: AVCaptureSession.wasInterruptedNotification,
+                           object: captureSession, queue: nil) { [weak self] notification in
+            let raw = (notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? NSNumber)?.intValue
+            let reason = raw.flatMap { AVCaptureSession.InterruptionReason(rawValue: $0) }
+            print("Capture session interrupted: \(raw ?? -1)")
+            // Another device has the microphone: keep the picture going without it
+            if reason == .audioDeviceInUseByAnotherClient {
+                self?.restartCamera(after: 0, withoutMic: true, reason: "mic taken")
+            }
+        }
+        center.addObserver(forName: AVCaptureSession.interruptionEndedNotification,
+                           object: captureSession, queue: nil) { [weak self] _ in
+            print("Capture session interruption ended")
+            self?.restartCamera(after: 0, withoutMic: false, reason: "interruption ended")
+        }
+        // Last resort for anything else: no frames for 2 s while the app is open
+        DispatchQueue.main.async { [weak self] in
+            self?.stallTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                self?.checkForStall()
+            }
+        }
+    }
+
+    private func checkForStall() {
+        guard UIApplication.shared.applicationState == .active, !isSwitchingCamera,
+              lastFrameTime > 0 else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastFrameTime > 2, now - lastCameraRestart > 5 else { return }
+        restartCamera(after: 0, withoutMic: false, reason: "no frames for 2 s")
+    }
+
+    private func restartCamera(after delay: TimeInterval, withoutMic: Bool, reason: String) {
+        lastCameraRestart = CACurrentMediaTime()
+        Self.sessionSetupQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            if withoutMic {
+                self.removeMic()
+            } else if self.micRemovedForOtherDevice {
+                self.putMicBack()
+            }
+            if self.captureSession.isRunning, reason == "no frames for 2 s" {
+                self.captureSession.stopRunning()
+            }
+            if !self.captureSession.isRunning {
+                self.captureSession.startRunning()
+            }
+            self.lastFrameTime = CACurrentMediaTime()
+            print("Camera restarted (\(reason)), running: \(self.captureSession.isRunning), mic: \(!self.micRemovedForOtherDevice)")
+        }
+    }
+
+    /// sessionSetupQueue only
+    private func removeMic() {
+        let micInputs = captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }
+            .filter { $0.device.hasMediaType(.audio) }
+        guard !micInputs.isEmpty else { return }
+        captureSession.beginConfiguration()
+        micInputs.forEach { captureSession.removeInput($0) }
+        captureSession.commitConfiguration()
+        micRemovedForOtherDevice = true
+    }
+
+    /// sessionSetupQueue only
+    private func putMicBack() {
+        micRemovedForOtherDevice = false
+        let hasMic = captureSession.inputs.contains { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.audio) == true }
+        guard !hasMic, let mic = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: mic) else { return }
+        captureSession.beginConfiguration()
+        if captureSession.canAddInput(input) { captureSession.addInput(input) }
+        captureSession.commitConfiguration()
     }
 
     /// Every camera change starts with this (main thread) and ends with endCameraChange
@@ -1598,6 +1700,7 @@ private var pairShutter: PairShutter? // PAIRTEST
         // view) a reading is far off, and matching to it gave a much too dark photo
         liveLevelsLock.lock()
         shutterLiveLevels = liveLevels.flatMap { $0.steady && CACurrentMediaTime() - $0.at < 1.2 ? $0.reading : nil }
+        shutterScreen = filteredPreview?.cgImage
         photoStartedAt = CACurrentMediaTime()
         pairShutter = PairShutter(live: pairLive, shown: filteredPreview?.cgImage, steady: liveLevels?.steady ?? false, // PAIRTEST
                                   age: liveLevels.map { CACurrentMediaTime() - $0.at } ?? -1, // PAIRTEST
@@ -1929,6 +2032,7 @@ private var pairShutter: PairShutter? // PAIRTEST
 
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if output != audioOutput { lastFrameTime = CACurrentMediaTime() }
         if output == videoOutput {
             // The active mode is only known once frames flow; log it once per camera setup
             if !hasLoggedStabilization {
@@ -2008,6 +2112,27 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
                              amount: look.mist)
         }
         return applyMist(to: filterEngine.applyFilter(to: ciImage))
+    }
+
+    /// Looks tiles: the centre of the live picture (zoom included), shrunk to a 216-pixel
+    /// square, at most 10 times a second and only while the Looks panel is open.
+    private func makeLookTileSource(from image: CIImage) {
+        guard wantsLookTiles else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastLookTileTime >= 0.1 else { return }
+        lastLookTileTime = now
+        let extent = image.extent
+        let side = min(extent.width, extent.height) / max(1, digitalZoom)
+        let square = CGRect(x: extent.midX - side / 2, y: extent.midY - side / 2, width: side, height: side).integral
+        let size: CGFloat = 216
+        let small = image.cropped(to: square)
+            .transformed(by: CGAffineTransform(translationX: -square.minX, y: -square.minY))
+            .transformed(by: CGAffineTransform(scaleX: size / square.width, y: size / square.height))
+        guard let cg = ciContext.createCGImage(small, from: CGRect(x: 0, y: 0, width: size, height: size)) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard self?.wantsLookTiles == true else { return }
+            self?.lookTileSource = cg
+        }
     }
 
     /// The Mist slider: the look of a mist (diffusion) glass on the lens. See `MistEffect`.
@@ -2095,6 +2220,8 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: -1, y: 1)
                 .translatedBy(x: -ciImage.extent.width, y: 0))
         }
+
+        if display { makeLookTileSource(from: ciImage) }
 
         let filteredImage = applyZoomSkinAndFilter(ciImage)
 
@@ -2245,7 +2372,14 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         // Photos carry their own orientation tag (video frames are always sideways)
         let rawOrientation = (photo.metadata[kCGImagePropertyOrientation as String] as? UInt32) ?? 1
         let orientation = CGImagePropertyOrientation(rawValue: rawOrientation) ?? .up
-        var ciImage = matchedToScreen(CIImage(cvPixelBuffer: pixelBuffer)).oriented(orientation)
+        // With the screen picture in hand, the finished photo is matched to it at the end
+        // (below); the older match to a brightness reading is only the fallback
+        liveLevelsLock.lock()
+        let screen = shutterScreen
+        shutterScreen = nil
+        liveLevelsLock.unlock()
+        let unmatched = CIImage(cvPixelBuffer: pixelBuffer)
+        var ciImage = (screen == nil ? matchedToScreen(unmatched) : skippingScreenMatch(unmatched)).oriented(orientation)
         if !portraitOn {
             // Portrait is off: the photo stays as it was taken
         } else if photoBlurUsesDepth {
@@ -2268,7 +2402,11 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: -1, y: 1)
                 .translatedBy(x: -ciImage.extent.width, y: 0))
         }
-        let finished = applyZoomSkinAndFilter(ciImage, scaleZoomBack: false, look: look)
+        var finished = applyZoomSkinAndFilter(ciImage, scaleZoomBack: false, look: look)
+        if let screen {
+            // Brightness and colour from what was on screen, detail from the real photo
+            finished = ScreenTransfer.matched(finished, to: CIImage(cgImage: screen), context: ciContext)
+        }
         guard let cgImage = ciContext.createCGImage(finished, from: finished.extent) else { return nil }
         savePair(still: pairStill, final: cgImage, photo: photo, look: look) // PAIRTEST
         return UIImage(cgImage: cgImage)
@@ -2337,6 +2475,15 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
     /// colour), so a photo did not look like what was on screen. This gives the still the live
     /// picture's dark-to-light spread and colour strength, as read just before the shutter
     /// press (see ScreenMatch). With no fresh live reading the photo is left alone.
+    /// Clears the shutter's reading without using it (the screen picture is used instead)
+    private func skippingScreenMatch(_ photo: CIImage) -> CIImage {
+        liveLevelsLock.lock()
+        shutterLiveLevels = nil
+        photoStartedAt = nil
+        liveLevelsLock.unlock()
+        return photo
+    }
+
     private func matchedToScreen(_ photo: CIImage) -> CIImage {
         liveLevelsLock.lock()
         let live = shutterLiveLevels

@@ -1,0 +1,5 @@
+# Brief: research + proposals (started 2026-11-19 13:19 CT, floor 15 min)
+User words: "do some more research on how we can make our app better what are the main pain points out there that have not been solved by other apps? What do people complain most about the native iPhone camera or TikTok or instagram camera? Are there anything's we can borrow from those apps? ... detailed research and /cook for at least 15 minutes and come up with proposals also suggest what we can improve for the apps. ... icons for the filters could be better and more realistic? Can we improve the skin smoothing? Is there a need to? What about the stabilization is ours as good as the native iPhone camera? Come up with proposals"
+Rules: RESEARCH ONLY. No code or app file changes. Proposals + pictures (PNG). Filter icons: 5 mockups A-E. Crisp filter untouched; photo stays 4:3; screen match untouched; blur fixes parked.
+Deliverable: PNG proposal sheets + /kiss reply; wait for the user's pick.
+Critics: fresh subagents, defects only, never rank.
