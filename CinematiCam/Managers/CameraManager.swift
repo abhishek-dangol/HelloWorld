@@ -2370,6 +2370,12 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         liveLevelsLock.unlock()
         let unmatched = CIImage(cvPixelBuffer: pixelBuffer)
         var ciImage = (screen == nil ? matchedToScreen(unmatched) : skippingScreenMatch(unmatched)).oriented(orientation)
+        if retouchEnabled {
+            // Smoothing keeps thin lines; the ones just under the eyes are faded here (photos only)
+            let underEyes = UnderEyeLines.faded(ciImage, context: ciContext)
+            ciImage = underEyes.image
+            logPhotoStep("under-eye lines faded (\(underEyes.eyes) eyes)")
+        }
         if !portraitOn {
             // Portrait is off: the photo stays as it was taken
         } else if photoBlurUsesDepth {

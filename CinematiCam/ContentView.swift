@@ -68,10 +68,8 @@ struct ContentView: View {
     @AppStorage("showLevel") private var showLevel = false
     /// Settings timer: seconds counted down after the shutter press (0 = off)
     @AppStorage("timerSeconds") private var timerSeconds = 0
-    @AppStorage("hdrVideo") private var hdrVideo = false
     /// On = selfies are saved as the screen shows them; off = as other people see you
     @AppStorage("mirrorSelfies") private var mirrorSelfies = true
-    @AppStorage("enhancedStabilization") private var enhancedStabilization = false
     @State private var filterIntensity: Double = 0.8
     @State private var showRetouchControls = false
     @State private var isPhotoMode = false
@@ -374,11 +372,9 @@ struct ContentView: View {
             permissionsManager.requestCameraPermission { granted in
                 if granted {
                     cameraManager.setPhotoMode(isPhotoMode)
-                    cameraManager.hdrEnabled = hdrVideo
                     shareVideoFormats()
                     cameraManager.wantsFourK = videoQuality == "4K"
                     cameraManager.wantedFrameRate = videoFrameRate
-                    cameraManager.enhancedStabilizationEnabled = enhancedStabilization
                     cameraManager.configure()
                     cameraManager.startSession()
                     // Restore saved filter or default to Natural
@@ -493,38 +489,14 @@ struct ContentView: View {
                     } footer: {
                         Text("Counts down after you press the shutter, then takes the photo or starts the video. Press the shutter again to cancel.")
                     }
-                    Section {
-                        Picker("Quality", selection: Binding(get: { videoQuality }, set: { videoQuality = $0 })) {
-                            Text("4K").tag("4K")
-                            Text("1080p").tag("1080p")
-                            Text("720p").tag("720p")
-                        }
-                        .onChange(of: videoQuality) { _ in applyVideoFormat() }
-                        .disabled(isRecordingPaused)
-                        // The selfie camera with blur stops at 30
-                        Picker("Speed", selection: Binding(get: { cameraManager.sixtyAvailable ? videoFrameRate : 30 },
-                                                           set: { videoFrameRate = $0 })) {
-                            Text("30").tag(30)
-                            Text("60").tag(60)
-                        }
-                        .onChange(of: videoFrameRate) { _ in applyVideoFormat() }
-                        .disabled(isRecordingPaused || !cameraManager.sixtyAvailable)
-                        // Locked while paused: clips in different formats can't be joined
-                        Toggle("HDR Video", isOn: $hdrVideo)
-                            .onChange(of: hdrVideo) { enabled in
-                                cameraManager.setHDREnabled(enabled)
-                            }
-                            .disabled(isRecordingPaused)
-                        Toggle("Enhanced Stabilization", isOn: $enhancedStabilization)
-                            .onChange(of: enhancedStabilization) { enabled in
-                                cameraManager.setEnhancedStabilizationEnabled(enabled)
-                            }
-                            .disabled(isRecordingPaused)
-                    } header: {
-                        Text(cameraManager.isFrontCamera ? "Video (selfie camera)" : "Video (back camera)")
-                    } footer: {
-                        Text("Enhanced Stabilization gives the smoothest footage, like Action mode, but turns off the Cinematic background blur.")
+                    // Its own view, so the camera's constant redraws can't drop a pick (see the file)
+                    VideoFormatSection(isFront: cameraManager.isFrontCamera,
+                                       sixtyAvailable: cameraManager.sixtyAvailable,
+                                       locked: isRecordingPaused) {
+                        // After the pick is saved everywhere
+                        DispatchQueue.main.async { applyVideoFormat() }
                     }
+                    .equatable()
                     Section {
                         Picker("Photo shape", selection: $photoShape) {
                             Text("4:3").tag("4:3")
