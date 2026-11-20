@@ -1886,9 +1886,12 @@ class CameraManager: NSObject, ObservableObject {
         // The radius is in pixels: a 4K frame needs twice the 1080p radius for the same look
         smoothingFilter.radius = retouchRadius * max(1, Float(CVPixelBufferGetWidth(inputBuffer)) / 1920)
 
-        guard let smoothedMTI = smoothingFilter.outputImage else {
+        guard let wholePicture = smoothingFilter.outputImage else {
             return nil
         }
+        // Older iPhones: smoothing on skin only, so beard, brows and background stay sharp
+        let smoothedMTI = SkinOnlySmoothing.isOn
+            ? SkinOnlySmoothing.kept(toSkin: wholePicture, original: mtiImage) : wholePicture
 
         // Render to pixel buffer
         do {
@@ -2447,14 +2450,18 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         let width = CVPixelBufferGetWidth(input)
         let height = CVPixelBufferGetHeight(input)
         let smoothingFilter = MTIHighPassSkinSmoothingFilter()
-        smoothingFilter.inputImage = MTIImage(cvPixelBuffer: input, alphaType: .alphaIsOne)
+        let unsmoothed = MTIImage(cvPixelBuffer: input, alphaType: .alphaIsOne)
+        smoothingFilter.inputImage = unsmoothed
         // The filter judges "smooth skin" pixel by pixel, so on a 12 MP photo far more of the
         // face counts as smooth than on the live picture, and the same amount came out about
         // 20% softer than the screen. The user picked 85% of the amount by eye, from a
         // side-by-side of the screen and five strengths (2026-11-19; a third was too light).
         smoothingFilter.amount = retouchAmount * Self.photoSmoothingShare
         smoothingFilter.radius = retouchRadius * Float(max(width, height)) / 1920
-        guard let output = smoothingFilter.outputImage else { return nil }
+        guard let wholePicture = smoothingFilter.outputImage else { return nil }
+        // Older iPhones: smoothing on skin only, the same as their video
+        let output = SkinOnlySmoothing.isOn
+            ? SkinOnlySmoothing.kept(toSkin: wholePicture, original: unsmoothed) : wholePicture
 
         var outputBuffer: CVPixelBuffer?
         let attributes: [String: Any] = [
