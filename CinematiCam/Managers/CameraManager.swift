@@ -23,7 +23,7 @@ class CameraManager: NSObject, ObservableObject {
     @Published var depthImage: UIImage?
     @Published var filteredPreview: UIImage?
     /// A small square copy of the live picture (before the look), for the Looks tiles.
-    /// Only made while the Looks panel is open (`wantsLookTiles`), about 10 times a second.
+    /// Only made while the Looks panel is open (`wantsLookTiles`), about 3 times a second.
     @Published private(set) var lookTileSource: CGImage?
     var wantsLookTiles = false
     private var lastLookTileTime: CFTimeInterval = 0
@@ -162,12 +162,6 @@ class CameraManager: NSObject, ObservableObject {
     /// what it was when the shutter was pressed (see matchedToScreen)
     private let liveLevelsLock = NSLock()
     private var liveLevels: (reading: ScreenMatch.Reading, at: CFTimeInterval, steady: Bool)?
-private struct PairShutter { // PAIRTEST
-    var live: CGImage?, shown: CGImage?, steady: Bool, age: Double, matched: Bool, levels: [Float] // PAIRTEST
-    var iso: Double, seconds: Double, bias: Double, offset: Double // PAIRTEST
-} // PAIRTEST
-private var pairLive: CGImage? // PAIRTEST
-private var pairShutter: PairShutter? // PAIRTEST
     private var photoStartedAt: CFTimeInterval?
     private var shutterLiveLevels: ScreenMatch.Reading?
     /// The picture on screen at the shutter press: the finished photo takes its brightness and
@@ -1702,11 +1696,6 @@ private var pairShutter: PairShutter? // PAIRTEST
         shutterLiveLevels = liveLevels.flatMap { $0.steady && CACurrentMediaTime() - $0.at < 1.2 ? $0.reading : nil }
         shutterScreen = filteredPreview?.cgImage
         photoStartedAt = CACurrentMediaTime()
-        pairShutter = PairShutter(live: pairLive, shown: filteredPreview?.cgImage, steady: liveLevels?.steady ?? false, // PAIRTEST
-                                  age: liveLevels.map { CACurrentMediaTime() - $0.at } ?? -1, // PAIRTEST
-                                  matched: shutterLiveLevels != nil, levels: liveLevels?.reading.levels ?? [], // PAIRTEST
-                                  iso: Double(device.iso), seconds: device.exposureDuration.seconds, // PAIRTEST
-                                  bias: Double(device.exposureTargetBias), offset: Double(device.exposureTargetOffset)) // PAIRTEST
         liveLevelsLock.unlock()
         shutterLook = ShutterLook(isFront: currentPosition == .front, zoom: digitalZoom,
                                   focusPoint: photoFocusPoint, aperture: chosenAperture,
@@ -2119,7 +2108,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
     private func makeLookTileSource(from image: CIImage) {
         guard wantsLookTiles else { return }
         let now = CACurrentMediaTime()
-        guard now - lastLookTileTime >= 0.1 else { return }
+        guard now - lastLookTileTime >= 0.33 else { return }
         lastLookTileTime = now
         let extent = image.extent
         let side = min(extent.width, extent.height) / max(1, digitalZoom)
@@ -2188,8 +2177,6 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
                 }
                 liveLevels = (reading, CACurrentMediaTime(), steady)
                 liveLevelsLock.unlock()
-                let pairCopyNow = pairCopy(CIImage(cvPixelBuffer: pixelBuffer)) // PAIRTEST
-                liveLevelsLock.lock(); pairLive = pairCopyNow; liveLevelsLock.unlock() // PAIRTEST
             }
         }
 
@@ -2365,13 +2352,13 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         let aperture = look?.aperture ?? chosenAperture
         guard var pixelBuffer = photo.pixelBuffer else { return nil }
         print("Photo captured: \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))")
-        let pairStill = pairCopy(CIImage(cvPixelBuffer: pixelBuffer)) // PAIRTEST
-        if retouchEnabled, let smoothed = retouchPhotoBuffer(pixelBuffer) {
-            pixelBuffer = smoothed
-        }
         // Photos carry their own orientation tag (video frames are always sideways)
         let rawOrientation = (photo.metadata[kCGImagePropertyOrientation as String] as? UInt32) ?? 1
         let orientation = CGImagePropertyOrientation(rawValue: rawOrientation) ?? .up
+        if retouchEnabled, let smoothed = retouchPhotoBuffer(pixelBuffer) {
+            pixelBuffer = smoothed
+        }
+        logPhotoStep("skin smoothing done")
         // With the screen picture in hand, the finished photo is matched to it at the end
         // (below); the older match to a brightness reading is only the fallback
         liveLevelsLock.lock()
@@ -2398,6 +2385,7 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         } else if photoBlurActive {
             ciImage = portraitBlur.finishedPhoto(ciImage, aperture: aperture)
         }
+        logPhotoStep("background blur outline done")
         if look?.isFront ?? (currentPosition == .front) {
             ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: -1, y: 1)
                 .translatedBy(x: -ciImage.extent.width, y: 0))
@@ -2407,61 +2395,13 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
             // Brightness and colour from what was on screen, detail from the real photo
             finished = ScreenTransfer.matched(finished, to: CIImage(cgImage: screen), context: ciContext)
         }
+        logPhotoStep("compared with the screen picture")
         guard let cgImage = ciContext.createCGImage(finished, from: finished.extent) else { return nil }
-        savePair(still: pairStill, final: cgImage, photo: photo, look: look) // PAIRTEST
+        logPhotoStep("full-size photo drawn")
         return UIImage(cgImage: cgImage)
     }
 
-    // PAIRTEST-BEGIN
-    private func pairCopy(_ image: CIImage, longSide: CGFloat = 640) -> CGImage? {
-        let scale = longSide / max(image.extent.width, image.extent.height)
-        guard scale.isFinite, scale > 0 else { return nil }
-        let small = image.applyingFilter("CILanczosScaleTransform",
-                                         parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1.0])
-        return ciContext.createCGImage(small, from: small.extent.integral, format: .RGBA8,
-                                       colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
-    }
 
-    private func savePair(still: CGImage?, final: CGImage, photo: AVCapturePhoto, look: ShutterLook?) {
-        liveLevelsLock.lock()
-        let shutter = pairShutter
-        pairShutter = nil
-        liveLevelsLock.unlock()
-        let stamp = DateFormatter()
-        stamp.dateFormat = "HHmmss"
-        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("pairs/\(stamp.string(from: Date()))")
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        func write(_ image: CGImage?, _ name: String, jpeg: Bool = false) {
-            guard let image else { return }
-            let picture = UIImage(cgImage: image)
-            try? (jpeg ? picture.jpegData(compressionQuality: 0.9) : picture.pngData())?
-                .write(to: folder.appendingPathComponent(name))
-        }
-        write(shutter?.live, "live.png")
-        write(still, "still.png")
-        write(shutter?.shown, "shown.jpg", jpeg: true)
-        write(pairCopy(CIImage(cgImage: final), longSide: 1600), "final.jpg", jpeg: true)
-        let exif = photo.metadata["{Exif}"] as? [String: Any] ?? [:]
-        var info: [String: Any] = [
-            "steady": shutter?.steady ?? false, "age": shutter?.age ?? -1, "matched": shutter?.matched ?? false,
-            "levels": (shutter?.levels ?? []).map { Double($0) },
-            "liveISO": shutter?.iso ?? 0, "liveSeconds": shutter?.seconds ?? 0,
-            "liveBias": shutter?.bias ?? 0, "liveOffset": shutter?.offset ?? 0,
-            "front": look?.isFront ?? false, "zoom": Double(look?.zoom ?? 1),
-            "filter": look?.filter?.name ?? "none", "filterIntensity": look?.filterIntensity ?? 0,
-            "mist": Double(look?.mist ?? 0), "portrait": portraitOn, "retouch": retouchEnabled,
-            "finalWidth": final.width, "finalHeight": final.height,
-        ]
-        for key in ["ISOSpeedRatings", "ExposureTime", "BrightnessValue", "ExposureBiasValue", "FNumber"] {
-            if let value = exif[key] { info["exif" + key] = "\(value)" }
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: folder.appendingPathComponent("info.json"))
-        }
-        print("PAIRTEST saved \(folder.lastPathComponent)")
-    }
-    // PAIRTEST-END
 
     /// A reading of one camera or view says nothing about the next one
     private func forgetLiveLevels() {
@@ -2496,6 +2436,8 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
 
     /// Skin smoothing for a full-size still. The blur radius is in pixels, so it grows with the
     /// photo to give the same look as on the 1920-pixel-wide video frames.
+    private static let photoSmoothingShare: Float = 0.85
+
     private func retouchPhotoBuffer(_ input: CVPixelBuffer) -> CVPixelBuffer? {
         guard cachedFaceBounds != nil else { return nil }
         mtiLock.lock()
@@ -2506,7 +2448,11 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
         let height = CVPixelBufferGetHeight(input)
         let smoothingFilter = MTIHighPassSkinSmoothingFilter()
         smoothingFilter.inputImage = MTIImage(cvPixelBuffer: input, alphaType: .alphaIsOne)
-        smoothingFilter.amount = retouchAmount
+        // The filter judges "smooth skin" pixel by pixel, so on a 12 MP photo far more of the
+        // face counts as smooth than on the live picture, and the same amount came out about
+        // 20% softer than the screen. The user picked 85% of the amount by eye, from a
+        // side-by-side of the screen and five strengths (2026-11-19; a third was too light).
+        smoothingFilter.amount = retouchAmount * Self.photoSmoothingShare
         smoothingFilter.radius = retouchRadius * Float(max(width, height)) / 1920
         guard let output = smoothingFilter.outputImage else { return nil }
 

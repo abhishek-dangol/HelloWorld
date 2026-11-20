@@ -145,6 +145,8 @@ struct ContentView: View {
     @State private var justSavedVideo = false
     @State private var showCaptureFlash = false
     @State private var captureAnimationPhase: CaptureAnimationPhase = .idle
+    /// Where the round thumbnail sits on screen, so the picture just taken can fly into it
+    @State private var thumbnailSlot: CGRect = .zero
     /// Shutter presses so far, and the last press whose real photo has arrived. While they
     /// differ, the thumbnail is the picture the screen showed at the press, standing in for
     /// the real photo (a 24 MP one takes about 2 s).
@@ -617,7 +619,8 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showLastCapture) {
             LastCaptureView(photo: isPhotoMode ? thumbnailPhoto : nil,
                             videoURL: isPhotoMode ? nil : lastVideoURL,
-                            savedAssetID: { isPhotoMode ? lastSavedPhotoID : lastSavedVideoID })
+                            savedAssetID: { isPhotoMode ? lastSavedPhotoID : lastSavedVideoID },
+                            photoReady: !isPhotoMode || photoLandedShot == photoShot)
         }
         .fullScreenCover(isPresented: $showVideoPreview) {
             if let url = recordedVideoURL {
@@ -713,7 +716,9 @@ struct ContentView: View {
         // Capture flash effect
         .overlay {
             if showCaptureFlash {
-                Color.white
+                // Dark, like the iPhone Camera: a white screen lit the face like a flash in a
+                // dark room, during the very moment the photo was taken
+                Color.black
                     .ignoresSafeArea()
             }
         }
@@ -721,18 +726,22 @@ struct ContentView: View {
         .overlay {
             if captureAnimationPhase != .idle, let photo = capturedPhoto {
                 GeometryReader { geometry in
+                    // Lands exactly on the round thumbnail, as a circle of its size
+                    let full = captureAnimationPhase == .fullScreen
+                    let origin = geometry.frame(in: .global).origin
+                    let landing = thumbnailSlot == .zero
+                        ? CGPoint(x: 65, y: geometry.size.height - 85)
+                        : CGPoint(x: thumbnailSlot.midX - origin.x, y: thumbnailSlot.midY - origin.y)
                     Image(uiImage: photo)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(
-                            width: captureAnimationPhase == .fullScreen ? geometry.size.width : 70,
-                            height: captureAnimationPhase == .fullScreen ? geometry.size.height : 70
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: captureAnimationPhase == .fullScreen ? 0 : 10))
-                        .position(
-                            x: captureAnimationPhase == .fullScreen ? geometry.size.width / 2 : 65,
-                            y: captureAnimationPhase == .fullScreen ? geometry.size.height / 2 : geometry.size.height - 85
-                        )
+                        .frame(width: full ? geometry.size.width : 48,
+                               height: full ? geometry.size.height : 48)
+                        .clipShape(RoundedRectangle(cornerRadius: full ? 0 : 24))
+                        .overlay(RoundedRectangle(cornerRadius: full ? 0 : 24)
+                            .stroke(Color.white.opacity(full ? 0 : 0.9), lineWidth: 1.5))
+                        .position(x: full ? geometry.size.width / 2 : landing.x,
+                                  y: full ? geometry.size.height / 2 : landing.y)
                 }
                 .ignoresSafeArea()
             }
@@ -1041,9 +1050,8 @@ struct ContentView: View {
 
     private func roundThumbnail(_ image: UIImage, popIn: Bool = false) -> some View {
         Button {
-            // The stand-in thumbnail does not open: it is a screen-sized copy, and sharing
-            // it would send that instead of the real photo
-            if isPhotoMode, photoLandedShot != photoShot { return }
+            // Like the iPhone Camera, it opens at once, even while the real photo is still
+            // being made: the screen copy shows first and the real photo replaces it
             showLastCapture = true
         } label: {
             SavedThumbnail(image: image, popIn: popIn) { justSavedVideo = false }
@@ -1169,6 +1177,11 @@ struct ContentView: View {
             // so the shutter stays centred
             Color.clear
                 .frame(maxWidth: .infinity)
+                .background(GeometryReader { slot in
+                    Color.clear
+                        .onAppear { thumbnailSlot = slot.frame(in: .global) }
+                        .onChange(of: slot.frame(in: .global)) { thumbnailSlot = $0 }
+                })
                 .overlay { leftOfShutter }
             shutterButton
             // Right of the shutter: End during a recording; flip camera otherwise. While

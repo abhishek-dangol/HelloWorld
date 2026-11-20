@@ -16,11 +16,14 @@ struct LibraryPager: UIViewControllerRepresentable {
     let assets: PHFetchResult<PHAsset>
     let startIndex: Int
     let jump: LibraryJump?
+    /// The picture already on screen for the first item. It stays up until Photos has the
+    /// sharp copy, so the change to the library never shows Photos' blurry first copy.
+    var startImage: UIImage? = nil
     /// Told which item is on screen, at the start and after every swipe or tap
     var onShow: (PHAsset) -> Void = { _ in }
 
     func makeUIViewController(context: Context) -> LibraryPagerController {
-        let controller = LibraryPagerController(assets: assets, startIndex: startIndex)
+        let controller = LibraryPagerController(assets: assets, startIndex: startIndex, startImage: startImage)
         controller.onShow = onShow
         return controller
     }
@@ -50,11 +53,13 @@ final class LibraryPagerController: UIViewController, UIPageViewControllerDataSo
     private let gap: CGFloat = 2
     private var didPlaceStrip = false
     private var fingerOnStrip = false
+    private var startImage: UIImage?
     var onShow: (PHAsset) -> Void = { _ in }
 
-    init(assets: PHFetchResult<PHAsset>, startIndex: Int) {
+    init(assets: PHFetchResult<PHAsset>, startIndex: Int, startImage: UIImage? = nil) {
         self.assets = assets
         self.index = max(0, min(startIndex, assets.count - 1))
+        self.startImage = startImage
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -88,6 +93,8 @@ final class LibraryPagerController: UIViewController, UIPageViewControllerDataSo
         strip.register(StripCell.self, forCellWithReuseIdentifier: "cell")
         strip.dataSource = self
         strip.delegate = self
+        // Fades in once it is in place, instead of popping in
+        strip.alpha = 0
         view.addSubview(strip)
     }
 
@@ -103,13 +110,17 @@ final class LibraryPagerController: UIViewController, UIPageViewControllerDataSo
             didPlaceStrip = true
             strip.layoutIfNeeded()
             centreStrip(animated: false)
+            UIView.animate(withDuration: 0.3) { self.strip.alpha = 1 }
         }
     }
 
     // MARK: Moving between items
 
     private func page(at index: Int) -> AssetPageController {
-        AssetPageController(asset: assets.object(at: index), index: index)
+        // Only the item the viewer opened on has a picture in hand, and only the first time
+        let held = index == self.index ? startImage : nil
+        if held != nil { startImage = nil }
+        return AssetPageController(asset: assets.object(at: index), index: index, placeholder: held)
     }
 
     /// Shows another item straight away (a tap on the thumbnail row or in All Photos).
@@ -231,10 +242,14 @@ final class AssetPageController: UIViewController {
     private let imageView = ZoomableImageView()
     private var playerController: AVPlayerViewController?
     private var isOnScreen = false
+    /// A sharp picture of this item that is already in hand; Photos' blurry first copy is
+    /// skipped while it is up
+    private let placeholder: UIImage?
 
-    init(asset: PHAsset, index: Int) {
+    init(asset: PHAsset, index: Int, placeholder: UIImage? = nil) {
         self.asset = asset
         self.index = index
+        self.placeholder = placeholder
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -250,6 +265,7 @@ final class AssetPageController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         imageView.frame = mediaFrame
+        imageView.image = placeholder
         view.addSubview(imageView)
         // Pinching in asks Photos for a bigger copy, so the close-up stays sharp
         imageView.onFirstZoom = { [weak self] in self?.loadImage(screens: 2.5, bestOnly: true) }
@@ -266,8 +282,11 @@ final class AssetPageController: UIViewController {
         options.isNetworkAccessAllowed = true
         PHImageManager.default().requestImage(for: asset,
                                               targetSize: CGSize(width: screen.width * scale, height: screen.height * scale),
-                                              contentMode: .aspectFit, options: options) { [weak self] image, _ in
-            if let image = image { self?.imageView.image = image }
+                                              contentMode: .aspectFit, options: options) { [weak self] image, info in
+            guard let self, let image else { return }
+            let blurry = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+            if blurry, self.placeholder != nil { return }
+            self.imageView.image = image
         }
     }
 
@@ -423,7 +442,11 @@ struct ZoomablePhoto: UIViewRepresentable {
 
     func updateUIView(_ view: ZoomableImageView, context: Context) {
         if view.image !== image {
-            view.image = image
+            // A soft change (the real photo taking the place of the screen copy), not a cut
+            UIView.transition(with: view, duration: 0.3,
+                              options: [.transitionCrossDissolve, .allowUserInteraction]) {
+                view.image = image
+            }
             view.resetZoom()
         }
     }

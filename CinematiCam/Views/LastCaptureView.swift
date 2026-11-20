@@ -14,6 +14,9 @@ struct LastCaptureView: View {
     let videoURL: URL?
     /// The Photos id of the capture being shown, once Photos has finished saving it
     var savedAssetID: () -> String? = { nil }
+    /// False while the photo shown is the screen copy and the real one is still being made.
+    /// Sharing waits for it, so the screen copy is never sent.
+    var photoReady = true
 
     @Environment(\.dismiss) private var dismiss
     @State private var shownPhoto: UIImage?
@@ -29,6 +32,8 @@ struct LastCaptureView: View {
     @State private var library: PHFetchResult<PHAsset>?
     @State private var libraryStart = 0
     @State private var libraryJump: LibraryJump?
+    /// The capture's own picture, handed to the library viewer so it opens on it sharp
+    @State private var libraryStartImage: UIImage?
     /// The Photos item on screen while swiping through the library
     @State private var shownAssetID: String?
     /// False once something picked without Photos access is shown: it has no item to hand over
@@ -44,6 +49,7 @@ struct LastCaptureView: View {
             ZStack {
                 if let library = library {
                     LibraryPager(assets: library, startIndex: libraryStart, jump: libraryJump,
+                                 startImage: libraryStartImage,
                                  onShow: { shownAssetID = $0.localIdentifier })
                         .ignoresSafeArea()
                 } else if let shownPhoto = shownPhoto {
@@ -92,6 +98,8 @@ struct LastCaptureView: View {
 
             if canShare {
                 shareButtons
+                    .disabled(!photoReady)
+                    .opacity(photoReady ? 1 : 0.4)
             }
         }
         .background(Color.black.ignoresSafeArea())
@@ -103,7 +111,12 @@ struct LastCaptureView: View {
             } else if let url = videoURL {
                 play(url)
             }
-            enterLibraryAtCapture(triesLeft: 6)
+            // Long enough for a photo still being made (about 2 s) to be saved too
+            enterLibraryAtCapture(triesLeft: 16)
+        }
+        .onChange(of: photo) { newPhoto in
+            // The real photo has arrived: it replaces the screen copy
+            if library == nil, let newPhoto { shownPhoto = newPhoto }
         }
         .onDisappear {
             player?.pause()
@@ -254,7 +267,7 @@ struct LastCaptureView: View {
         guard library == nil, access == .authorized || access == .limited else { return }
         if let id = savedAssetID(),
            let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject {
-            enterLibrary(at: asset)
+            enterLibrary(at: asset, keepingPicture: true)
         } else if triesLeft > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 enterLibraryAtCapture(triesLeft: triesLeft - 1)
@@ -264,13 +277,14 @@ struct LastCaptureView: View {
 
     /// Opens the swipeable library on one item. False if the item is not in it.
     @discardableResult
-    private func enterLibrary(at asset: PHAsset) -> Bool {
+    private func enterLibrary(at asset: PHAsset, keepingPicture: Bool = false) -> Bool {
         let all = library ?? GalleryLibrary.fetchAll()
         let index = all.index(of: asset)
         guard index != NSNotFound else { return false }
         if library == nil {
             player?.pause()
             player = nil
+            libraryStartImage = keepingPicture ? shownPhoto : nil
             shownPhoto = nil
             removePickedVideoCopy()
             libraryStart = index
